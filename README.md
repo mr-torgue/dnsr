@@ -10,6 +10,12 @@ The `Resolve` method on `dnsr.Resolver` queries DNS for given name and type (`A`
 This code leans heavily on [Miek Gieben’s](https://github.com/miekg) excellent [DNS library](https://github.com/miekg/dns),
  and is currently in production use at [Domainr](https://domainr.com/).
 
+## Changes
+In anticipation of creating a resolver plugin for CoreDNS, we make a few changes to dnsr.
+- [ ] Support sending queries over DoT and DoQ by using doggo to facilitate encryption between resolver and name server
+- [ ] Let dnsr return the dns.Msg object directly
+- [ ] Add support for UDP fragmentation
+
 ## Install
 
 `go get github.com/domainr/dnsr`
