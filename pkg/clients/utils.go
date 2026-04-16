@@ -6,7 +6,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"time"
+//	"time"
 
 	"github.com/miekg/dns"
 	"golang.org/x/net/idna"

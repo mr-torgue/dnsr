@@ -74,7 +74,7 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, question dns.Que
 	if tlsHostname == "" {
 		tlsHostname = dst.server // assumes that dst.server is NOT in format IP:port
 	}
-	tlsconf = &tls.Config{
+	tlsconf := &tls.Config{
 			NextProtos:         []string{"doq"},
 			ServerName:         dst.TLSHostname,
 			InsecureSkipVerify: c.config.InsecureSkipVerify,
@@ -107,7 +107,7 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, question dns.Que
 		if err != nil {
 			return nil, err
 		}
-		now := time.Now()
+		//now := time.Now()
 
 		stream, err := session.OpenStreamSync(ctx)
 		if err != nil {
