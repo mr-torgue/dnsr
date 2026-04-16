@@ -64,22 +64,22 @@ func LoadClient(config ClientConfig) (Client, error) {
 	switch(config.clientType) {
 	case models.DOHClient:
 		config.Logger.Debug("initiating DOH client")
-		client, err := NewDOHClient(config)
+		client, err = NewDOHClient(config)
 	case models.DOTClient:
 		config.Logger.Debug("initiating DOT client")
-		client, err := NewClassicClient(config, ClassicClientOpts{ UseTLS: true, UseTCP: true })
+		client, err = NewClassicClient(config, ClassicClientOpts{ UseTLS: true, UseTCP: true })
 	case models.TCPClient:
 		config.Logger.Debug("initiating TCP client")
-		client, err := NewClassicClient(config, ClassicClientOpts{ UseTLS: false, UseTCP: true })
+		client, err = NewClassicClient(config, ClassicClientOpts{ UseTLS: false, UseTCP: true })
 	case models.UDPClient:
 		config.Logger.Debug("initiating UDP client")
-		client, err := NewClassicClient(config, ClassicClientOpts{ UseTLS: false, UseTCP: false })
+		client, err = NewClassicClient(config, ClassicClientOpts{ UseTLS: false, UseTCP: false })
 	case models.DNSCryptClient:
 		config.Logger.Debug("initiating DNSCrypt client")
-		client, err := NewDNSCryptClient(config, DNSCryptClientOpts{ UseTCP: false })
+		client, err = NewDNSCryptClient(config, DNSCryptClientOpts{ UseTCP: false })
 	case models.DOQClient:
 		config.Logger.Debug("initiating DOQ client")
-		client, err := NewDOQClient(config)
+		client, err = NewDOQClient(config)
 	default:
 		return nil, fmt.Errorf("Please use a valid client!")
 	}
@@ -87,5 +87,5 @@ func LoadClient(config ClientConfig) (Client, error) {
 		return nil, fmt.Errorf("Could not create client!")
 	}
 	config.Logger.Debug("Using the following configuration: %s\n", config)
-	return client, err
+	return client, nil
 }
