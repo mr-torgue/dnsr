@@ -18,7 +18,7 @@ import (
 type DOQClient struct {
 	config ClientConfig
 	port		  int
-	fallbackClient: ClassicClient
+	fallbackClient ClassicClient
 }
 
 // splitHostPort splits a host:port string and handles IPv6 addresses properly.
