@@ -18,7 +18,7 @@ import (
 type DOHClient struct {
 	config ClientConfig
 	port		 int
-	fallbackClient: ClassicClient,
+	fallbackClient: ClassicClient
 }
 
 // NewDOHClient returns a DOHClient

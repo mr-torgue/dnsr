@@ -38,8 +38,7 @@ func NewClassicClient(config ClientConfig, opts ClassicClientOpts) (Client, erro
 
 	if config.UseIPv4 {
 		net = net + "4"
-	}
-	else if config.UseIPv6 {
+	} else if config.UseIPv6 {
 		net = net + "6"
 	}
 
