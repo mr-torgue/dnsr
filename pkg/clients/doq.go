@@ -37,11 +37,14 @@ func splitHostPort(addr string) (host, port string, err error) {
 // NewDOQClient accepts a nameserver address and configures a DOQ based client.
 func NewDOQClient(config ClientConfig) (Client, error) {
 	// create a fallback client
-	var classicClient = nil
+	var classicClient ClassicClient
 	if config.useUDPFallback {
 		classicClientConfig := config
 		classicClientConfig.clientType = models.UDPClient
-		classicClient, err := NewClassicClient(classicClientConfig, ClassicClientOpts{ false, false})
+		classicClient, err = NewClassicClient(classicClientConfig, ClassicClientOpts{ false, false })
+		if err != nil {
+			config.Logger.Infof("Could not initialize fallback client in DoQ!\n")
+		}
 	}
 
 	return &DOQClient{
@@ -80,6 +83,10 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, server string, q
 	addr := net.JoinHostPort(dst.server, c.port)
 	session, err := quic.DialAddr(ctx, dst.server, tls, nil)
 	if err != nil {
+		// fallback if enabled
+		if c.config.useUDPFallback {
+			return c.fallbackClient.query(ctx, dst, question, flags)
+		}
 		return nil, err
 	}
 	defer session.CloseWithError(quic.ApplicationErrorCode(quic.NoError), "")

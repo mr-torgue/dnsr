@@ -26,11 +26,14 @@ type DOHClient struct {
 // NewDOHClient returns a DOHClient
 func NewDOHClient(config ClientConfig) (Client, error) {
 	// create a fallback client
-	var classicClient = nil
+	var classicClient ClassicClient
 	if config.useUDPFallback {
 		classicClientConfig := config
 		classicClientConfig.clientType = models.UDPClient
-		classicClient, err := NewClassicClient(classicClientConfig, ClassicClientOpts{ false, false})
+		classicClient, err = NewClassicClient(classicClientConfig, ClassicClientOpts{ false, false })
+		if err != nil {
+			config.Logger.Infof("Could not initialize fallback client in DoH!\n")
+		}
 	}
 
 	return &DOHClient{
@@ -42,7 +45,7 @@ func NewDOHClient(config ClientConfig) (Client, error) {
 
 // Lookup implements the Client interface
 func (c *DOHClient) Lookup(ctx context.Context, dst Destination, questions []dns.Question, flags QueryFlags) ([]*dns.Msg, error) {
-	return ConcurrentLookup(ctx, dst, questions, flags, r.query, r.resolverOptions.Logger)
+	return ConcurrentLookup(ctx, dst, questions, flags, c.query, c.config.Logger)
 }
 
 // query takes a dns.Question and sends them to DNS Server.
@@ -88,6 +91,10 @@ func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Que
 		// Create a new request with the context
 		req, err := http.NewRequestWithContext(ctx, "POST", addr, bytes.NewBuffer(b))
 		if err != nil {
+			// fallback if enabled
+			if c.config.useUDPFallback {
+				return c.fallbackClient.query(ctx, dst, question, flags)
+			}
 			return nil, err
 		}
 		req.Header.Set("Content-Type", "application/dns-message")

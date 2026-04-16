@@ -32,11 +32,14 @@ func NewDNSCryptClient(config ClientConfig, opts DNSCryptClientOpts) (Client, er
 	client := &dnscrypt.Client{Net: net, Timeout: config.Timeout, UDPSize: 4096}
 
 	// create a fallback client
-	var classicClient = nil
+	var classicClient ClassicClient 
 	if config.useUDPFallback {
 		classicClientConfig := config
 		classicClientConfig.clientType = models.UDPClient
-		classicClient, err := NewClassicClient(classicClientConfig, ClassicClientOpts{ false, false})
+		classicClient, err = NewClassicClient(classicClientConfig, ClassicClientOpts{ false, false })
+		if err != nil {
+			config.Logger.Infof("Could not initialize fallback client in DNSCrypt!\n")
+		}
 	}
 
 	return &DNSCryptClient{
@@ -49,7 +52,7 @@ func NewDNSCryptClient(config ClientConfig, opts DNSCryptClientOpts) (Client, er
 
 // Lookup implements the Client interface
 func (c *DNSCryptClient) Lookup(ctx context.Context, dst Destination, questions []dns.Question, flags QueryFlags) ([]*dns.Msg, error) {
-	return ConcurrentLookup(ctx, dst, questions, flags, c.query, c.clientOptions.Logger)
+	return ConcurrentLookup(ctx, dst, questions, flags, c.query, c.config.Logger)
 }
 
 // query performs a single DNS query
@@ -62,8 +65,8 @@ func (c *DNSCryptClient) query(ctx context.Context, dst Destination, question dn
 	clientInfo, err := client.Dial(dst.server)
 	if err != nil {
 		// fallback if enabled
-		if c.config.useUDPFallback && c.fallbackClient != nil {
-			return fallbackClient.query(ctx, dst, question, flags)
+		if c.config.useUDPFallback {
+			return c.fallbackClient.query(ctx, dst, question, flags)
 		}
 		return nil, err
 	}
@@ -97,8 +100,8 @@ func (c *DNSCryptClient) query(ctx context.Context, dst Destination, question dn
 			if result.err != nil {
 				return rsp, result.err
 			}
-			in := result.resp
-			rtt := time.Since(now)
+			in = result.resp
+			//rtt := time.Since(now)
 
 			if in.Rcode == dns.RcodeSuccess {
 				// stop iterating the searchlist.

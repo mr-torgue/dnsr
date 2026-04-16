@@ -86,6 +86,6 @@ func LoadClient(config ClientConfig) (Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Could not create client!")
 	}
-	config.Logger.Debug("Using the following configuration: %s\n", config)
+	config.Logger.Debugf("Using the following configuration: %s\n", config)
 	return client, nil
 }
