@@ -39,7 +39,7 @@ type Client interface {
 }
 
 // Returns a new ClientConfig
-func NewClientConfig(logger *slog.Logger, clientType string, timeout time.Duration) {
+func NewClientConfig(logger *slog.Logger, clientType string, timeout time.Duration) (ClientConfig) {
 	return ClientConfig{
 		Logger: 			logger,
 		clientType: 		clientType,
@@ -76,7 +76,7 @@ func LoadClient(config ClientConfig) (Client, error) {
 		client, err := NewClassicClient(config, ClassicClientOpts{ UseTLS: false, UseTCP: false })
 	case models.DNSCryptClient:
 		config.Logger.Debug("initiating DNSCrypt client")
-		client, err := NewDNSCryptClient(opts, DNSCryptClientOpts{ useTCP: false })
+		client, err := NewDNSCryptClient(config, DNSCryptClientOpts{ UseTCP: false })
 	case models.DOQClient:
 		config.Logger.Debug("initiating DOQ client")
 		client, err := NewDOQClient(config)
