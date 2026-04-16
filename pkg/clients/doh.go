@@ -26,7 +26,7 @@ type DOHClient struct {
 // NewDOHClient returns a DOHClient
 func NewDOHClient(config ClientConfig) (Client, error) {
 	// create a fallback client
-	var classicClient ClassicClient
+	var classicClient Client
 	var err error
 	if config.useUDPFallback {
 		classicClientConfig := config
@@ -53,7 +53,7 @@ func (c *DOHClient) Lookup(ctx context.Context, dst Destination, questions []dns
 // It parses the Response from the server in a custom output format.
 func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
 	var (
-		msg      *dns.Msg
+		//msg      *dns.Msg
 		messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
 	)
 	
@@ -76,7 +76,7 @@ func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Que
 		Transport: transport,
 	}
 
-	for _, msg = range messages {
+	for _, msg := range messages {
 		c.config.Logger.Debug("Attempting to resolve",
 			"domain", msg.Question[0].Name,
 			"ndots", c.config.Ndots,
@@ -147,7 +147,7 @@ func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Que
 
 		if msg.Rcode == dns.RcodeSuccess {
 			// stop iterating the searchlist.
-			break
+			return msg, nil
 		}
 
 		// Check if context is done after each iteration
@@ -158,5 +158,5 @@ func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Que
 			// Continue to next iteration
 		}
 	}
-	return msg, nil
+	return nil, nil
 }

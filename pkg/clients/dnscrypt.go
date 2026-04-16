@@ -32,7 +32,7 @@ func NewDNSCryptClient(config ClientConfig, opts DNSCryptClientOpts) (Client, er
 	client := &dnscrypt.Client{Net: net, Timeout: config.Timeout, UDPSize: 4096}
 
 	// create a fallback client
-	var classicClient ClassicClient 
+	var classicClient Client 
 	var err error
 	if config.useUDPFallback {
 		classicClientConfig := config

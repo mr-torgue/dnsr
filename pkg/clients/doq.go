@@ -37,7 +37,7 @@ func splitHostPort(addr string) (host, port string, err error) {
 // NewDOQClient accepts a nameserver address and configures a DOQ based client.
 func NewDOQClient(config ClientConfig) (Client, error) {
 	// create a fallback client
-	var classicClient ClassicClient
+	var classicClient Client
 	var err error
 	if config.useUDPFallback {
 		classicClientConfig := config
@@ -64,7 +64,7 @@ func (c *DOQClient) Lookup(ctx context.Context, dst Destination, questions []dns
 // It parses the Response from the server in a custom output format.
 func (c *DOQClient) query(ctx context.Context, dst Destination, server string, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
 	var (
-		msg      *dns.Msg
+		//msg      *dns.Msg
 		messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
 	)
 
@@ -171,7 +171,7 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, server string, q
 
 		if msg.Rcode == dns.RcodeSuccess {
 			// stop iterating the searchlist.
-			break
+			return msg, nil
 		}
 
 		// Check if context is done after each iteration
@@ -182,5 +182,5 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, server string, q
 			// Continue to next iteration
 		}
 	}
-	return msg, nil
+	return nil, nil
 }

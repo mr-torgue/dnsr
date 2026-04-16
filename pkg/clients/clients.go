@@ -35,6 +35,7 @@ type Destination struct {
 // Client implements the configuration for a DNS Client. 
 // In contrast to doggo, a Client does not specify the endpoint
 type Client interface {
+	query(ctx context.Context, dst Destination, question dns.Question, flags QueryFlags) (*dns.Msg, error)
 	Lookup(ctx context.Context, dst Destination, questions []dns.Question, flags QueryFlags) ([]*dns.Msg, error)
 }
 
