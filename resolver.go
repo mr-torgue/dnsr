@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"time"
+	"log/slog"
 
 	"github.com/mr-torgue/dnsr/pkg/models"
 	"github.com/mr-torgue/dnsr/pkg/clients"
@@ -351,7 +352,7 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 
 	//fmt.Printf("err: %s, rslvr: %s\n", err, rslvr)
 	//fmt.Printf("initiating DOQ resolver")
-	var dst = clients.Destination{ server: ip }
+	dst := clients.Destination{ server: ip }
 	res, err := rslvr.Lookup(ctx, dst, qmsg.Question, flags)
 	fmt.Printf("err: %s, res: %s\n", err, res)
 
