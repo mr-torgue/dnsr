@@ -4,8 +4,9 @@ import (
 	"context"
 	"log/slog"
 	"time"
-	"github.com/mr-torgue/dnsr/pkg/models"
+	"fmt"
 
+	"github.com/mr-torgue/dnsr/pkg/models"
 	"github.com/miekg/dns"
 )
 
@@ -56,12 +57,13 @@ func NewClientConfig(logger *slog.Logger, clientType string, timeout time.Durati
 
 // LoadClient loads the correct Client based on the configuration.
 func LoadClient(config ClientConfig) (Client, error) {
-	var client Client = nil
-	var err error = nil
+	var (
+		client Client
+		err error
+	)
 	switch(config.clientType) {
 	case models.DOHClient:
 		config.Logger.Debug("initiating DOH client")
-		config.port = models.DefaultDOHPort
 		client, err := NewDOHClient(config)
 	case models.DOTClient:
 		config.Logger.Debug("initiating DOT client")
@@ -74,12 +76,15 @@ func LoadClient(config ClientConfig) (Client, error) {
 		client, err := NewClassicClient(config, ClassicClientOpts{ UseTLS: false, UseTCP: false })
 	case models.DNSCryptClient:
 		config.Logger.Debug("initiating DNSCrypt client")
-		client, err := NewDNSCryptClient(opts)
+		client, err := NewDNSCryptClient(opts, DNSCryptClientOpts{ useTCP: false })
 	case models.DOQClient:
 		config.Logger.Debug("initiating DOQ client")
 		client, err := NewDOQClient(config)
 	default:
-		return nil, "Please use a valid client!"
+		return nil, fmt.Errorf("Please use a valid client!")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("Could not create client!")
 	}
 	config.Logger.Debug("Using the following configuration: %s\n", config)
 	return client, err
