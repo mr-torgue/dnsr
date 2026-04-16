@@ -15,6 +15,11 @@ In anticipation of creating a resolver plugin for CoreDNS, we make a few changes
 - [ ] Support sending queries over DoT and DoQ by using doggo to facilitate encryption between resolver and name server
 - [ ] Let dnsr return the dns.Msg object directly
 - [ ] Add support for UDP fragmentation
+- [ ] Add support for DNSSEC validation
+
+Issues:
+- [ ] PTR not working
+- [ ] Fix performance issues
 
 ## Install
 

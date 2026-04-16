@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"net"
 	"time"
-	
-	"github.com/mr-torgue/dnsr/pkg/models"
+	"log/slog"
+
 	"github.com/miekg/dns"
+	"github.com/mr-karan/doggo/pkg/resolvers"
+	"github.com/mr-karan/doggo/pkg/models"
+	"github.com/mr-karan/doggo/pkg/utils"
 )
 
 // DNS Resolution configuration.
@@ -78,12 +81,16 @@ func WithTCPRetry() Option {
 
 // Resolver implements a primitive, non-recursive, caching DNS resolver.
 type Resolver struct {
-	dialer   ContextDialer
-	timeout  time.Duration
-	cache    *cache
-	capacity int
-	expire   bool
-	tcpRetry bool
+	logger    *slog.Logger
+	dialer    ContextDialer
+	timeout   time.Duration
+	cache     *cache
+	capacity  int
+	expire    bool
+	tcpRetry  bool
+	conn_type string
+	udpRetry  bool
+	// TODO: add type QUIC or traditional
 }
 
 // NewResolver returns an initialized Resolver with options.
@@ -95,6 +102,7 @@ func NewResolver(options ...Option) *Resolver {
 		o(r)
 	}
 	r.cache = newCache(r.capacity, r.expire)
+	r.logger = utils.InitLogger(true)
 	return r
 }
 
@@ -314,17 +322,163 @@ func (r *Resolver) exchange(ctx context.Context, host, qname, qtype string, dept
 
 var dialerDefault = &net.Dialer{}
 
+// Loads a set of clients
+func (r *Resolver) LoadClients(ip, opts Options) ([]Resolver, error) {
+	// For each nameserver, initialise the correct resolver.
+	rslvrs := make([]Resolver, 0, len(opts.Nameservers))
+
+	if r.conn_type == models.DOHResolver {
+		opts.Logger.Debug("initiating DOH resolver")
+		rslvr, err := NewDOHResolver(ns.Address, opts)
+		if err != nil {
+			return rslvrs, err
+		}
+		rslvrs = append(rslvrs, rslvr)
+	}
+	else if ns.Type == models.DOTResolver {
+		opts.Logger.Debug("initiating DOT resolver")
+		rslvr, err := NewClassicResolver(ns.Address,
+			ClassicResolverOpts{
+				UseTLS: true,
+				UseTCP: true,
+			}, opts)
+
+		if err != nil {
+			return rslvrs, err
+		}
+		rslvrs = append(rslvrs, rslvr)
+	}
+	else if ns.Type == models.DNSCryptResolver {
+		opts.Logger.Debug("initiating DNSCrypt resolver")
+		rslvr, err := NewDNSCryptResolver(ns.Address,
+			DNSCryptResolverOpts{
+				UseTCP: false,
+			}, opts)
+		if err != nil {
+			return rslvrs, err
+		}
+		rslvrs = append(rslvrs, rslvr)
+	}
+	else if ns.Type == models.DOQResolver {
+		opts.Logger.Debug("initiating DOQ resolver")
+		rslvr, err := NewDOQResolver(ns.Address, opts)
+		if err != nil {
+			return rslvrs, err
+		}
+		rslvrs = append(rslvrs, rslvr)
+	}
+	// UDP might be used as a fallback
+	if ns.Type == models.UDPResolver || ns.udpRetry {
+		opts.Logger.Debug("initiating UDP resolver")
+		rslvr, err := NewClassicResolver(ns.Address,
+			ClassicResolverOpts{
+				UseTLS: false,
+				UseTCP: false,
+			}, opts)
+		if err != nil {
+			return rslvrs, err
+		}
+		rslvrs = append(rslvrs, rslvr)
+	}
+
+	if ns.Type == models.TCPResolver || ns.tcpRetry {
+		opts.Logger.Debug("initiating TCP resolver")
+		rslvr, err := NewClassicResolver(ns.Address,
+			ClassicResolverOpts{
+				UseTLS: false,
+				UseTCP: true,
+			}, opts)
+		if err != nil {
+			return rslvrs, err
+		}
+		rslvrs = append(rslvrs, rslvr)
+	}
+
+
+	return rslvrs, nil
+}
+
+// Sends `question` from the resolver to the name server specified with `ip`.
+func (r *Resolver) connect(ctx context.Context, ip, question, flags) (*dns.Msg, error) {
+
+	var rmsg *dns.Msg 
+	for i in range len(r.rslvrs) {
+		// check timeout
+		if dl, ok := ctx.Deadline(); ok {
+			if start.After(dl.Add(-TypicalResponseTime)) { // bail if we can't finish in time (start is too close to deadline)
+				return nil, ErrTimeout
+			}
+			timeout = dl.Sub(start)
+		}
+		rslvr := rslvrs[i]
+		addr := net.JoinHostPort(ip, r.rslvr.port)
+		res, err := rslvr.Lookup(ctx, qmsg.Question, flags)		
+		// check if successful
+		if err == nil {
+			return rmsg, nil
+		}		
+		// inefficient, we
+		if i < (len(rslvrs) - 1) {
+			fmt.Printf("%s did not work, falling back to %s\n", rslvr.conn_type, rslvrs[i + 1].conn_type);
+
+		}
+	}
+	return nil, errors.New("Connetion failed!")
+}
+
+// connects to the
+func (r *Resolver) connect(ctx context.Context, host, ip, qname, qtype string, depth int) (*dns.Msg, error) {
+	// load clients
+	rslvrs, err = r.LoadClients(ip, opts)
+	if err != nil {
+		fmt.Printf("Could not initialize clients!\n")
+		return rslvrs, err
+	}
+	// clients ready
+
+	var rmsg *dns.Msg // set with lookup
+	// Synchronously query this DNS server
+	start := time.Now()
+	timeout := r.timeout // belt and suspenders, since ctx has a deadline from ResolveErr
+	if dl, ok := ctx.Deadline(); ok {
+		if start.After(dl.Add(-TypicalResponseTime)) { // bail if we can't finish in time (start is too close to deadline)
+			return nil, ErrTimeout
+		}
+		timeout = dl.Sub(start)
+	}
+	for i in range len(rslvrs) {
+		rslvr = rslvrs[i]
+
+		res, err := rslvr.Lookup(ctx, qmsg.Question, flags)
+
+
+		// check if successful
+		if err == nil {
+			return rmsg;
+		}
+
+		if i < (len(rslvrs) - 1) {
+			fmt.Printf("%s did not work, falling back to %s\n", rslvr.conn_type, rslvrs[i + 1].conn_type);
+
+		}
+	}
+	fmt.Printf("")
+	return nil, nil
+}
+
 func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string, depth int) (RRs, error) {
 	dtype := dns.StringToType[qtype]
 	if dtype == 0 {
 		dtype = dns.TypeA
 	}
-	var qmsg dns.Msg
+	var qmsg dns.Msg	
 	qmsg.SetQuestion(qname, dtype)
 	qmsg.MsgHdr.RecursionDesired = false
 
 
-		ns := models.Nameserver{ 
+	// create a client
+	addr := net.JoinHostPort(ip, "53")
+	ns := models.Nameserver{ 
 		Address: addr,
 		//Type: models.DOQResolver,
 		Type: models.UDPResolver,  
@@ -373,8 +527,6 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 	res, err := rslvr.Lookup(ctx, qmsg.Question, flags)
 	fmt.Printf("err: %s, res: %s\n", err, res)
 
-
-
 	// Synchronously query this DNS server
 	start := time.Now()
 	timeout := r.timeout // belt and suspenders, since ctx has a deadline from ResolveErr
@@ -385,23 +537,7 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 		timeout = dl.Sub(start)
 	}
 
-	// client must finish within remaining timeout
-	client := &dns.Client{Timeout: timeout}
-
-	dialer := r.dialer
-	if dialer == nil {
-		dialer = dialerDefault
-	}
-
-	addr := net.JoinHostPort(ip, "53")
-	conn, err := dialer.DialContext(ctx, "udp", addr)
-	var rmsg *dns.Msg
 	var dur time.Duration
-	if err == nil {
-		dconn := &dns.Conn{Conn: conn}
-		rmsg, dur, err = client.ExchangeWithConnContext(ctx, &qmsg, dconn)
-		conn.Close()
-	}
 	if r.tcpRetry && rmsg != nil && rmsg.MsgHdr.Truncated {
 		// Since we are doing another query, we need to recheck the deadline
 		if dl, ok := ctx.Deadline(); ok {
@@ -410,14 +546,7 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 			}
 			client.Timeout = dl.Sub(start)
 		}
-		// Retry with TCP
-		var tcpConn net.Conn
-		tcpConn, err = dialer.DialContext(ctx, "tcp", addr)
-		if err == nil {
-			dconn := &dns.Conn{Conn: tcpConn}
-			rmsg, dur, err = client.ExchangeWithConnContext(ctx, &qmsg, dconn)
-			tcpConn.Close()
-		}
+		// set up TCP
 	}
 
 	select {
@@ -430,7 +559,7 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 	if err != nil {
 		return nil, err
 	}
-
+	fmt.Printf("rmsg: %s\n", rmsg)
 	// FIXME: cache NXDOMAIN responses responsibly
 	if rmsg.Rcode == dns.RcodeNameError {
 		var hasSOA bool
