@@ -18,7 +18,7 @@ import (
 // DOQClient represents the config options for setting up a DOQ based client.
 type DOQClient struct {
 	config ClientConfig
-	port		  int
+	port		  string
 	fallbackClient ClassicClient
 }
 
@@ -59,7 +59,10 @@ func (c *DOQClient) Lookup(ctx context.Context, dst Destination, questions []dns
 // query takes a dns.Question and sends them to DNS Server.
 // It parses the Response from the server in a custom output format.
 func (c *DOQClient) query(ctx context.Context, dst Destination, server string, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
-	var messages = prepareMessages(question, flags, r.clientOptions.Ndots, r.clientOptions.SearchList)
+	var (
+		msg      *dns.Msg
+		messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
+	)
 
 	// Extract hostname from server address for TLS verification
 	// If TLSHostname is explicitly set via flag, use that; otherwise extract from server address

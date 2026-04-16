@@ -19,7 +19,7 @@ import (
 // DOHClient represents the config options for setting up a DOH based client.
 type DOHClient struct {
 	config ClientConfig
-	port		 int
+	port		 string
 	fallbackClient ClassicClient
 }
 
@@ -48,7 +48,10 @@ func (c *DOHClient) Lookup(ctx context.Context, dst Destination, questions []dns
 // query takes a dns.Question and sends them to DNS Server.
 // It parses the Response from the server in a custom output format.
 func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
-	var messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
+	var (
+		msg      *dns.Msg
+		messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
+	)
 	
 	// do basic validation and setup https connection
 	addr := net.JoinHostPort(dst.server, r.port)

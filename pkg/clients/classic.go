@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"time"
 	"net"
+	"fmt"
 
 	"github.com/mr-torgue/dnsr/pkg/models"
 	"github.com/miekg/dns"
@@ -15,7 +16,7 @@ type ClassicClient struct {
 	client          *dns.Client
 	config   		ClientConfig
 	opts 			ClassicClientOpts
-	port 			int
+	port 			string
 }
 
 // ClassicClientOpts holds options for setting up a Classic client.
@@ -66,8 +67,10 @@ func (c *ClassicClient) Lookup(ctx context.Context, dst Destination, questions [
 // query takes a dns.Question and sends them to DNS Server specified in server.
 // It parses the Response from the server in a custom output format.
 func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
-
-	var messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
+	var (
+		in      *dns.Msg
+		messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
+	)
 
 	// set TLS if enabled
 	if c.opts.UseTLS {
@@ -89,7 +92,7 @@ func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns
 
 		// Since the library doesn't include tcp.Dial time,
 		// it's better to not rely on `rtt` provided here and calculate it ourselves.
-		now := time.Now()
+		//now := time.Now()
 
 		in, _, err := c.client.ExchangeContext(ctx, &msg, dst.server)
 		if err != nil {
@@ -104,7 +107,7 @@ func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns
 		if in.Truncated {
 			if !c.config.useTCPFallback {
 				c.config.Logger.Debug("Truncated msg and TCP retransmission disabled!")
-				return in, "truncated response and TCP retransmission disabled"
+				return in, fmt.Errorf("truncated response and TCP retransmission disabled")
 			}
 			switch c.client.Net {
 			case "udp":
@@ -120,7 +123,7 @@ func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns
 			return c.query(ctx, dst, question, flags)
 		}
 
-		if len(output.Answers) > 0 || in.Rcode == dns.RcodeSuccess {
+		if in.Rcode == dns.RcodeSuccess {
 			// Stop iterating the searchlist.
 			break
 		}

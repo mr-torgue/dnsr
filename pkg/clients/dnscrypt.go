@@ -54,8 +54,10 @@ func (c *DNSCryptClient) Lookup(ctx context.Context, dst Destination, questions 
 
 // query performs a single DNS query
 func (c *DNSCryptClient) query(ctx context.Context, dst Destination, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
-	var messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
-
+	var (
+		in      *dns.Msg
+		messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
+	)
 
 	clientInfo, err := client.Dial(dst.server)
 	if err != nil {
