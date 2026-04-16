@@ -87,7 +87,7 @@ func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Que
 		if err != nil {
 			return nil, err
 		}
-		now := time.Now()
+		//now := time.Now()
 
 		// Create a new request with the context
 		req, err := http.NewRequestWithContext(ctx, "POST", addr, bytes.NewBuffer(b))
@@ -147,13 +147,13 @@ func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Que
 
 		if msg.Rcode == dns.RcodeSuccess {
 			// stop iterating the searchlist.
-			return msg, nil
+			return &msg, nil
 		}
 
 		// Check if context is done after each iteration
 		select {
 		case <-ctx.Done():
-			return msg, ctx.Err()
+			return &msg, ctx.Err()
 		default:
 			// Continue to next iteration
 		}

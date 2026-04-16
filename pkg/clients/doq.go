@@ -50,7 +50,7 @@ func NewDOQClient(config ClientConfig) (Client, error) {
 
 	return &DOQClient{
 		config: config,
-		port:          port,
+		port:          DefaultDOQPort,
 		fallbackClient: classicClient,
 	}, nil
 }
@@ -62,7 +62,7 @@ func (c *DOQClient) Lookup(ctx context.Context, dst Destination, questions []dns
 
 // query takes a dns.Question and sends them to DNS Server.
 // It parses the Response from the server in a custom output format.
-func (c *DOQClient) query(ctx context.Context, dst Destination, server string, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
+func (c *DOQClient) query(ctx context.Context, dst Destination, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
 	var (
 		//msg      *dns.Msg
 		messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
@@ -76,8 +76,8 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, server string, q
 	}
 	tls = &tls.Config{
 			NextProtos:         []string{"doq"},
-			ServerName:         tlsHostname,
-			InsecureSkipVerify: clientOpts.InsecureSkipVerify,
+			ServerName:         dst.tlsHostname,
+			InsecureSkipVerify: c.config.InsecureSkipVerify,
 		}
 
 
@@ -92,7 +92,7 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, server string, q
 	}
 	defer session.CloseWithError(quic.ApplicationErrorCode(quic.NoError), "")
 
-	for _, msg = range messages {
+	for _, msg := range messages {
 		c.config.Logger.Debug("Attempting to resolve",
 			"domain", msg.Question[0].Name,
 			"ndots", c.config.Ndots,
@@ -171,13 +171,13 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, server string, q
 
 		if msg.Rcode == dns.RcodeSuccess {
 			// stop iterating the searchlist.
-			return msg, nil
+			return &msg, nil
 		}
 
 		// Check if context is done after each iteration
 		select {
 		case <-ctx.Done():
-			return msg, ctx.Err()
+			return &msg, ctx.Err()
 		default:
 			// Continue to next iteration
 		}
