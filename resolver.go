@@ -9,6 +9,7 @@ import (
 
 	"github.com/mr-torgue/dnsr/pkg/models"
 	"github.com/mr-torgue/dnsr/pkg/clients"
+	"github.com/mr-torgue/dnsr/pkg/utils"
 	"github.com/miekg/dns"
 )
 
@@ -79,6 +80,7 @@ func WithTCPRetry() Option {
 
 // Resolver implements a primitive, non-recursive, caching DNS resolver.
 type Resolver struct {
+	logger    *slog.Logger
 	dialer   ContextDialer
 	timeout  time.Duration
 	cache    *cache
@@ -96,6 +98,7 @@ func NewResolver(options ...Option) *Resolver {
 		o(r)
 	}
 	r.cache = newCache(r.capacity, r.expire)
+	r.logger = utils.InitLogger(true)
 	return r
 }
 
@@ -325,7 +328,7 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 	qmsg.MsgHdr.RecursionDesired = false
 
 
-	config := clients.NewClientConfig(r.logger, models.UDPResolver, r.timeout)
+	config := clients.NewClientConfig(r.logger, models.UDPClient, r.timeout)
 	flags := clients.QueryFlags{
 		AA: false, // Authoritative Answer
 		AD: false, // Authenticated Data
@@ -344,13 +347,12 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 
 	fmt.Printf("initiating DOQ resolver\n")
 	//rslvr, err := resolvers.NewDOQResolver(ns.Address, opts)
-	rslvr, err := LoadClient(config)
+	rslvr, err := clients.LoadClient(config)
 
 	//fmt.Printf("err: %s, rslvr: %s\n", err, rslvr)
 	//fmt.Printf("initiating DOQ resolver")
-	var rmsg *dns.Msg // set with lookup
-	var dst = Destination{ server: ip }
-	res, err := rslvr.Lookup(ctx, qmsg.Question, flags)
+	var dst = clients.Destination{ server: ip }
+	res, err := rslvr.Lookup(ctx, dst, qmsg.Question, flags)
 	fmt.Printf("err: %s, res: %s\n", err, res)
 
 
