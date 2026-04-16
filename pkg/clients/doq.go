@@ -38,12 +38,13 @@ func splitHostPort(addr string) (host, port string, err error) {
 func NewDOQClient(config ClientConfig) (Client, error) {
 	// create a fallback client
 	var classicClient ClassicClient
+	var err error
 	if config.useUDPFallback {
 		classicClientConfig := config
 		classicClientConfig.clientType = models.UDPClient
-		classicClient, err = NewClassicClient(classicClientConfig, ClassicClientOpts{ false, false })
+		classicClient, err = NewClassicClient(classicClientConfig, ClassicClientOpts{ UseTLS: false, UseTCP: false })
 		if err != nil {
-			config.Logger.Infof("Could not initialize fallback client in DoQ!\n")
+			config.Logger.Info("Could not initialize fallback client in DoQ!\n")
 		}
 	}
 
