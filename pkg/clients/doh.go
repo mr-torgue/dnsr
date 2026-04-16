@@ -9,8 +9,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"net"
 	"time"
 
+	"github.com/mr-torgue/dnsr/pkg/models"
+	"github.com/mr-torgue/dnsr/pkg/clients"
 	"github.com/miekg/dns"
 )
 
@@ -22,7 +25,7 @@ type DOHClient struct {
 }
 
 // NewDOHClient returns a DOHClient
-func NewDOHClient(config ClientConfig) (Resolver, error) {
+func NewDOHClient(config ClientConfig) (Client, error) {
 	// create a fallback client
 	var classicClient = nil
 	if config.useUDPFallback {
@@ -38,7 +41,7 @@ func NewDOHClient(config ClientConfig) (Resolver, error) {
 	}, nil
 }
 
-// Lookup implements the Resolver interface
+// Lookup implements the Client interface
 func (c *DOHClient) Lookup(ctx context.Context, dst Destination, questions []dns.Question, flags QueryFlags) ([]*dns.Msg, error) {
 	return ConcurrentLookup(ctx, dst, questions, flags, r.query, r.resolverOptions.Logger)
 }

@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"time"
+	"net"
 
+	"github.com/mr-torgue/dnsr/pkg/models"
 	"github.com/miekg/dns"
 )
 
@@ -58,7 +60,7 @@ func NewClassicClient(config ClientConfig, opts ClassicClientOpts) (Client, erro
 
 // Lookup implements the Client interface
 func (c *ClassicClient) Lookup(ctx context.Context, dst Destination, questions []dns.Question, flags QueryFlags) ([]*dns.Msg, error) {
-	return ConcurrentLookup(ctx, dst, questions, flags, c.query, c.clientOptions.Logger)
+	return ConcurrentLookup(ctx, dst, questions, flags, c.query, c.config.Logger)
 }
 
 // query takes a dns.Question and sends them to DNS Server specified in server.
@@ -89,7 +91,7 @@ func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns
 		// it's better to not rely on `rtt` provided here and calculate it ourselves.
 		now := time.Now()
 
-		in, _, err := c.client.ExchangeContext(ctx, &msg, r.server)
+		in, _, err := c.client.ExchangeContext(ctx, &msg, dst.server)
 		if err != nil {
 			if err == context.Canceled || err == context.DeadlineExceeded {
 				return in, err
@@ -102,7 +104,7 @@ func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns
 		if in.Truncated {
 			if !c.config.useTCPFallback {
 				c.config.Logger.Debug("Truncated msg and TCP retransmission disabled!")
-				return in, ""
+				return in, "truncated response and TCP retransmission disabled"
 			}
 			switch c.client.Net {
 			case "udp":
