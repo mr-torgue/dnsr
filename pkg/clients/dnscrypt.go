@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/mr-torgue/dnsr/pkg/models"
-	"github.com/mr-torgue/dnsr/pkg/clients"
 	"github.com/ameshkov/dnscrypt/v2"
 	"github.com/miekg/dns"
 )

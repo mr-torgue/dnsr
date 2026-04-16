@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/mr-torgue/dnsr/pkg/models"
-	"github.com/mr-torgue/dnsr/pkg/clients"
 	"github.com/miekg/dns"
 )
 
