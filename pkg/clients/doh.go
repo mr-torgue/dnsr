@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"net"
-	"time"
+//	"time"
 
 	"github.com/mr-torgue/dnsr/pkg/models"
 	"github.com/miekg/dns"

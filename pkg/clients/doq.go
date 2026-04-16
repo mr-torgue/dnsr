@@ -8,7 +8,7 @@ import (
 	"io"
 	"net"
 	"strings"
-	"time"
+//	"time"
 
 	"github.com/mr-torgue/dnsr/pkg/models"
 	"github.com/miekg/dns"
@@ -50,7 +50,7 @@ func NewDOQClient(config ClientConfig) (Client, error) {
 
 	return &DOQClient{
 		config: config,
-		port:          DefaultDOQPort,
+		port:          models.DefaultDOQPort,
 		fallbackClient: classicClient,
 	}, nil
 }
@@ -74,15 +74,15 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, question dns.Que
 	if tlsHostname == "" {
 		tlsHostname = dst.server // assumes that dst.server is NOT in format IP:port
 	}
-	tls = &tls.Config{
+	tlsconf = &tls.Config{
 			NextProtos:         []string{"doq"},
-			ServerName:         dst.tlsHostname,
+			ServerName:         dst.TLSHostname,
 			InsecureSkipVerify: c.config.InsecureSkipVerify,
 		}
 
 
 	addr := net.JoinHostPort(dst.server, c.port)
-	session, err := quic.DialAddr(ctx, dst.server, tls, nil)
+	session, err := quic.DialAddr(ctx, addr, tlsconf, nil)
 	if err != nil {
 		// fallback if enabled
 		if c.config.useUDPFallback {
@@ -96,7 +96,7 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, question dns.Que
 		c.config.Logger.Debug("Attempting to resolve",
 			"domain", msg.Question[0].Name,
 			"ndots", c.config.Ndots,
-			"nameserver", dst.server,
+			"nameserver", addr,
 		)
 
 		// ref: https://www.rfc-editor.org/rfc/rfc9250.html#name-dns-message-ids
@@ -135,7 +135,7 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, question dns.Que
 		}
 
 		// Use a separate context with timeout for reading the response
-		readCtx, cancel := context.WithTimeout(ctx, r.clientOptions.Timeout)
+		readCtx, cancel := context.WithTimeout(ctx, c.config.Timeout)
 		defer cancel()
 
 		var buf []byte
@@ -155,7 +155,7 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, question dns.Que
 			return nil, fmt.Errorf("timeout reading response")
 		}
 
-		rtt := time.Since(now)
+		//rtt := time.Since(now)
 
 		if len(buf) < 2 {
 			return nil, fmt.Errorf("response too short: got %d bytes, need at least 2", len(buf))

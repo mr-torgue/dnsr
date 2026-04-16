@@ -2,7 +2,7 @@ package clients
 
 import (
 	"context"
-	"time"
+//	"time"
 
 	"github.com/mr-torgue/dnsr/pkg/models"
 	"github.com/ameshkov/dnscrypt/v2"
