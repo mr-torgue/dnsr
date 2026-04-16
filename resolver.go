@@ -325,26 +325,8 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 	qmsg.MsgHdr.RecursionDesired = false
 
 
-		ns := models.Nameserver{ 
-		Address: addr,
-		//Type: models.DOQResolver,
-		Type: models.UDPResolver,  
-	}
-	// do we have to do this everytime?
-	// maybe replace with a function call 
-	opts := resolvers.Options{ 
-		Logger: r.logger,
-		Nameservers: []models.Nameserver{ns},
-		UseIPv4: true,
-		UseIPv6: false,
-		SearchList: []string{""},
-		Ndots: 0,
-		Timeout: r.timeout,
-		Strategy: "",
-		InsecureSkipVerify: true,
-		TLSHostname: host,
-	}
-	flags := resolvers.QueryFlags{
+	config := clients.NewClientConfig(r.logger, models.UDPResolver, r.timeout)
+	flags := clients.QueryFlags{
 		AA: false, // Authoritative Answer
 		AD: false, // Authenticated Data
 		CD: false, // Checking Disabled
@@ -362,15 +344,12 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 
 	fmt.Printf("initiating DOQ resolver\n")
 	//rslvr, err := resolvers.NewDOQResolver(ns.Address, opts)
-	rslvr, err := resolvers.NewClassicResolver(ns.Address,
-					resolvers.ClassicResolverOpts{
-						UseTLS: false,
-						UseTCP: false,
-					}, opts)
+	rslvr, err := LoadClient(config)
 
 	//fmt.Printf("err: %s, rslvr: %s\n", err, rslvr)
 	//fmt.Printf("initiating DOQ resolver")
 	var rmsg *dns.Msg // set with lookup
+	var dst = Destination{ server: ip }
 	res, err := rslvr.Lookup(ctx, qmsg.Question, flags)
 	fmt.Printf("err: %s, res: %s\n", err, res)
 
