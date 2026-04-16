@@ -19,7 +19,7 @@ import (
 type DOQClient struct {
 	config ClientConfig
 	port		  string
-	fallbackClient ClassicClient
+	fallbackClient Client
 }
 
 // splitHostPort splits a host:port string and handles IPv6 addresses properly.
@@ -92,7 +92,7 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, server string, q
 	}
 	defer session.CloseWithError(quic.ApplicationErrorCode(quic.NoError), "")
 
-	for _, msg := range messages {
+	for _, msg = range messages {
 		c.config.Logger.Debug("Attempting to resolve",
 			"domain", msg.Question[0].Name,
 			"ndots", c.config.Ndots,

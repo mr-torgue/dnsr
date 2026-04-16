@@ -14,7 +14,7 @@ type DNSCryptClient struct {
 	client          *dnscrypt.Client
 	config   		ClientConfig
 	opts			DNSCryptClientOpts
-	fallbackClient  ClassicClient
+	fallbackClient  Client
 }
 
 // DNSCryptClientOpts holds options for setting up a DNSCrypt client.
@@ -79,7 +79,7 @@ func (c *DNSCryptClient) query(ctx context.Context, dst Destination, question dn
 			"nameserver", dst.server,
 		)
 
-		now := time.Now()
+		//now := time.Now()
 
 		// Use a channel to handle the result of the Exchange
 		resultChan := make(chan struct {
@@ -99,7 +99,7 @@ func (c *DNSCryptClient) query(ctx context.Context, dst Destination, question dn
 		select {
 		case result := <-resultChan:
 			if result.err != nil {
-				return rsp, result.err
+				return in, result.err
 			}
 			in = result.resp
 			//rtt := time.Since(now)

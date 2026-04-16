@@ -20,7 +20,7 @@ import (
 type DOHClient struct {
 	config ClientConfig
 	port		 string
-	fallbackClient ClassicClient
+	fallbackClient Client
 }
 
 // NewDOHClient returns a DOHClient
@@ -38,7 +38,7 @@ func NewDOHClient(config ClientConfig) (Client, error) {
 	}
 
 	return &DOHClient{
-		config: ClientConfig,
+		config: config,
 		port: models.DefaultDOHPort,
 		fallbackClient: classicClient,
 	}, nil
@@ -58,7 +58,7 @@ func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Que
 	)
 	
 	// do basic validation and setup https connection
-	addr := net.JoinHostPort(dst.server, r.port)
+	addr := net.JoinHostPort(dst.server, c.port)
 	u, err := url.ParseRequestURI(addr)
 	if err != nil {
 		return nil, fmt.Errorf("%s is not a valid HTTPS nameserver", addr)
@@ -76,7 +76,7 @@ func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Que
 		Transport: transport,
 	}
 
-	for _, msg := range messages {
+	for _, msg = range messages {
 		c.config.Logger.Debug("Attempting to resolve",
 			"domain", msg.Question[0].Name,
 			"ndots", c.config.Ndots,
@@ -108,7 +108,7 @@ func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Que
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusMethodNotAllowed {
-			url, err := url.Parse(r.server)
+			url, err := url.Parse(dst.server)
 			if err != nil {
 				return nil, err
 			}
@@ -127,11 +127,11 @@ func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Que
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("error from nameserver %s", resp.Status)
 		}
-		rtt := time.Since(now)
+		//rtt := time.Since(now)
 
 		// if debug, extract the response headers
 		for header, value := range resp.Header {
-			r.resolverOptions.Logger.Debug("DOH response header", header, value)
+			c.config.Logger.Debug("DOH response header", header, value)
 		}
 
 		// extract the binary response in DNS Message.
