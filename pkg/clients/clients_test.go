@@ -1,13 +1,13 @@
-// Classic Tests
+package clients
 
-// UDP (DoUDP)
+import (
+	"testing"
+	"time"
 
-// UDP 1: A record of domain 
+	"github.com/nbio/st"
+)
 
-// UDP 2: A record of domain with no recursion
-
-// UDP 3: A record of domain with no recursion and incorrect nameserver
-
-// TCP (DoTCP)
-
-// TLS (DoT)
+func TestNewClientConfig(t *testing.T) {
+	config := NewClientConfig(nil, "udp", 23)
+	st.Expect(t, config.logger, nil)
+}
