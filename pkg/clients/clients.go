@@ -28,7 +28,7 @@ type ClientConfig struct {
 
 // Destination specifies the endpoint
 type Destination struct {
-	server 			   string // IP address
+	Server 			   string // IP address
 	TLSHostname        string 
 }
 

@@ -63,7 +63,7 @@ func (c *DNSCryptClient) query(ctx context.Context, dst Destination, question dn
 		messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
 	)
 
-	clientInfo, err := c.client.Dial(dst.server)
+	clientInfo, err := c.client.Dial(dst.Server)
 	if err != nil {
 		// fallback if enabled
 		if c.config.useUDPFallback {
@@ -76,7 +76,7 @@ func (c *DNSCryptClient) query(ctx context.Context, dst Destination, question dn
 		c.config.Logger.Debug("Attempting to resolve",
 			"domain", msg.Question[0].Name,
 			"ndots", c.config.Ndots,
-			"nameserver", dst.server,
+			"nameserver", dst.Server,
 		)
 
 		//now := time.Now()

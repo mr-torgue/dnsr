@@ -58,7 +58,7 @@ func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Que
 	)
 	
 	// do basic validation and setup https connection
-	addr := net.JoinHostPort(dst.server, c.port)
+	addr := net.JoinHostPort(dst.Server, c.port)
 	u, err := url.ParseRequestURI(addr)
 	if err != nil {
 		return nil, fmt.Errorf("%s is not a valid HTTPS nameserver", addr)
@@ -108,7 +108,7 @@ func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Que
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusMethodNotAllowed {
-			url, err := url.Parse(dst.server)
+			url, err := url.Parse(addr)
 			if err != nil {
 				return nil, err
 			}

@@ -352,7 +352,7 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 
 	//fmt.Printf("err: %s, rslvr: %s\n", err, rslvr)
 	//fmt.Printf("initiating DOQ resolver")
-	dst := clients.Destination{ server: ip }
+	dst := clients.Destination{ Server: ip }
 	res, err := rslvr.Lookup(ctx, dst, qmsg.Question, flags)
 	fmt.Printf("err: %s, res: %s\n", err, res)
 

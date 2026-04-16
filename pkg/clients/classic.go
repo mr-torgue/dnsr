@@ -82,7 +82,7 @@ func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns
 		}
 	}
 	
-	addr := net.JoinHostPort(dst.server, c.port)
+	addr := net.JoinHostPort(dst.Server, c.port)
 	for _, msg := range messages {
 		c.config.Logger.Debug("Attempting to resolve",
 			"domain", msg.Question[0].Name,
@@ -94,7 +94,7 @@ func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns
 		// it's better to not rely on `rtt` provided here and calculate it ourselves.
 		//now := time.Now()
 
-		in, _, err := c.client.ExchangeContext(ctx, &msg, dst.server)
+		in, _, err := c.client.ExchangeContext(ctx, &msg, addr)
 		if err != nil {
 			if err == context.Canceled || err == context.DeadlineExceeded {
 				return in, err

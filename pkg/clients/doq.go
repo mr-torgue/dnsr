@@ -72,7 +72,7 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, question dns.Que
 	// If TLSHostname is explicitly set via flag, use that; otherwise extract from server address
 	tlsHostname := dst.TLSHostname
 	if tlsHostname == "" {
-		tlsHostname = dst.server // assumes that dst.server is NOT in format IP:port
+		tlsHostname = dst.Server // assumes that dst.server is NOT in format IP:port
 	}
 	tlsconf := &tls.Config{
 			NextProtos:         []string{"doq"},
@@ -81,7 +81,7 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, question dns.Que
 		}
 
 
-	addr := net.JoinHostPort(dst.server, c.port)
+	addr := net.JoinHostPort(dst.Server, c.port)
 	session, err := quic.DialAddr(ctx, addr, tlsconf, nil)
 	if err != nil {
 		// fallback if enabled
