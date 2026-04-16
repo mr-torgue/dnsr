@@ -11,59 +11,64 @@ import (
 // DNSCryptClient represents the config options for setting up a Client.
 type DNSCryptClient struct {
 	client          *dnscrypt.Client
-	clientOptions Options
+	config   		ClientConfig
+	opts			DNSCryptClientOpts
 	fallbackClient  ClassicClient
 }
 
+// DNSCryptClientOpts holds options for setting up a DNSCrypt client.
+type DNSCryptClientOpts struct {
+	UseTCP bool
+}
 
 // NewDNSCryptClient accepts a list of nameservers and configures a DNS client.
-func NewDNSCryptClient(clientOpts Options) (Client, error) {
+func NewDNSCryptClient(config ClientConfig, opts DNSCryptClientOpts) (Client, error) {
 	net := "udp"
-	if clientOpts.UseTCP {
+	if opts.UseTCP {
 		net = "tcp"
 	}
 
-	client := &dnscrypt.Client{Net: net, Timeout: clientOpts.Timeout, UDPSize: 4096}
+	client := &dnscrypt.Client{Net: net, Timeout: config.Timeout, UDPSize: 4096}
 
+	// create a fallback client
 	var classicClient = nil
-	if clientOpts.useUDPFallback {
-		classicClientOpts := copyOpts(clientOpts)
-		classicClientOpts.UseTLS = false
-		classicClientOpts.UseTCP = false
-		classicClientOpts.port = standard
-		classicClient, err := NewClassicClient(classicClientOpts)
+	if config.useUDPFallback {
+		classicClientConfig := config
+		classicClientConfig.clientType = models.UDPClient
+		classicClient, err := NewClassicClient(classicClientConfig, ClassicClientOpts{ false, false})
 	}
 
 	return &DNSCryptClient{
-		client:          client,
-		clientOptions: clientOpts,
+		client:         client,
+		config: 		config,
+		opts: 			opts,
 		fallbackClient: classicClient,
 	}, nil
 }
 
 // Lookup implements the Client interface
-func (r *DNSCryptClient) Lookup(ctx context.Context, dst Destination, questions []dns.Question, flags QueryFlags) ([]*dns.Msg, error) {
-	return ConcurrentLookup(ctx, questions, flags, r.query, r.clientOptions.Logger)
+func (c *DNSCryptClient) Lookup(ctx context.Context, dst Destination, questions []dns.Question, flags QueryFlags) ([]*dns.Msg, error) {
+	return ConcurrentLookup(ctx, dst, questions, flags, c.query, c.clientOptions.Logger)
 }
 
 // query performs a single DNS query
-func (r *DNSCryptClient) query(ctx context.Context, dst Destination, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
-	var messages = prepareMessages(question, flags, r.clientOptions.Ndots, r.clientOptions.SearchList)
+func (c *DNSCryptClient) query(ctx context.Context, dst Destination, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
+	var messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
 
 
 	clientInfo, err := client.Dial(dst.server)
 	if err != nil {
 		// fallback if enabled
-		if r.clientOptions.useUDPFallback && r.fallbackClient != nil {
+		if c.config.useUDPFallback && c.fallbackClient != nil {
 			return fallbackClient.query(ctx, dst, question, flags)
 		}
 		return nil, err
 	}
 
 	for _, msg := range messages {
-		r.clientOptions.Logger.Debug("Attempting to resolve",
+		c.config.Logger.Debug("Attempting to resolve",
 			"domain", msg.Question[0].Name,
-			"ndots", r.clientOptions.Ndots,
+			"ndots", c.config.Ndots,
 			"nameserver", dst.server,
 		)
 
@@ -76,7 +81,7 @@ func (r *DNSCryptClient) query(ctx context.Context, dst Destination, question dn
 		})
 
 		go func() {
-			resp, err := r.client.Exchange(&msg, clientInfo)
+			resp, err := c.client.Exchange(&msg, clientInfo)
 			resultChan <- struct {
 				resp *dns.Msg
 				err  error
@@ -92,7 +97,7 @@ func (r *DNSCryptClient) query(ctx context.Context, dst Destination, question dn
 			in := result.resp
 			rtt := time.Since(now)
 
-			if len(output.Answers) > 0 || in.Rcode == dns.RcodeSuccess {
+			if in.Rcode == dns.RcodeSuccess {
 				// stop iterating the searchlist.
 				return in, nil
 			}

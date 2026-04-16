@@ -1,4 +1,4 @@
-package resolvers
+package clients
 
 import (
 	"bytes"
@@ -14,93 +14,105 @@ import (
 	"github.com/miekg/dns"
 )
 
-// DOHResolver represents the config options for setting up a DOH based resolver.
-type DOHResolver struct {
-	client          *http.Client
-	server          string
-	resolverOptions Options
+// DOHClient represents the config options for setting up a DOH based client.
+type DOHClient struct {
+	config ClientConfig
+	port		 int
+	fallbackClient: ClassicClient,
 }
 
-// NewDOHResolver accepts a nameserver address and configures a DOH based resolver.
-func NewDOHResolver(server string, resolverOpts Options) (Resolver, error) {
-	// do basic validation
-	u, err := url.ParseRequestURI(server)
-	if err != nil {
-		return nil, fmt.Errorf("%s is not a valid HTTPS nameserver", server)
+// NewDOHClient returns a DOHClient
+func NewDOHClient(config ClientConfig) (Resolver, error) {
+	// create a fallback client
+	var classicClient = nil
+	if config.useUDPFallback {
+		classicClientConfig := config
+		classicClientConfig.clientType = models.UDPClient
+		classicClient, err := NewClassicClient(classicClientConfig, ClassicClientOpts{ false, false})
 	}
-	if u.Scheme != "https" {
-		return nil, fmt.Errorf("missing https in %s", server)
-	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = &tls.Config{
-		ServerName:         resolverOpts.TLSHostname,
-		InsecureSkipVerify: resolverOpts.InsecureSkipVerify,
-	}
-	httpClient := &http.Client{
-		Timeout:   resolverOpts.Timeout,
-		Transport: transport,
-	}
-	return &DOHResolver{
-		client:          httpClient,
-		server:          server,
-		resolverOptions: resolverOpts,
+
+	return &DOHClient{
+		config: ClientConfig,
+		port: models.DefaultDOHPort,
+		fallbackClient: classicClient,
 	}, nil
+}
+
+// Lookup implements the Resolver interface
+func (c *DOHClient) Lookup(ctx context.Context, dst Destination, questions []dns.Question, flags QueryFlags) ([]*dns.Msg, error) {
+	return ConcurrentLookup(ctx, dst, questions, flags, r.query, r.resolverOptions.Logger)
 }
 
 // query takes a dns.Question and sends them to DNS Server.
 // It parses the Response from the server in a custom output format.
-func (r *DOHResolver) query(ctx context.Context, question dns.Question, flags QueryFlags) (Response, error) {
-	var (
-		rsp      Response
-		messages = prepareMessages(question, flags, r.resolverOptions.Ndots, r.resolverOptions.SearchList)
-	)
+func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
+	var messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
+	
+	// do basic validation and setup https connection
+	addr := net.JoinHostPort(dst.server, r.port)
+	u, err := url.ParseRequestURI(addr)
+	if err != nil {
+		return nil, fmt.Errorf("%s is not a valid HTTPS nameserver", addr)
+	}
+	if u.Scheme != "https" {
+		return nil, fmt.Errorf("missing https in %s", addr)
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{
+		ServerName:         dst.TLSHostname,
+		InsecureSkipVerify: c.config.InsecureSkipVerify,
+	}
+	httpClient := &http.Client{
+		Timeout:   c.config.Timeout,
+		Transport: transport,
+	}
 
 	for _, msg := range messages {
-		r.resolverOptions.Logger.Debug("Attempting to resolve",
+		c.config.Logger.Debug("Attempting to resolve",
 			"domain", msg.Question[0].Name,
-			"ndots", r.resolverOptions.Ndots,
-			"nameserver", r.server,
+			"ndots", c.config.Ndots,
+			"nameserver", addr,
 		)
 		// get the DNS Message in wire format.
 		b, err := msg.Pack()
 		if err != nil {
-			return rsp, err
+			return nil, err
 		}
 		now := time.Now()
 
 		// Create a new request with the context
-		req, err := http.NewRequestWithContext(ctx, "POST", r.server, bytes.NewBuffer(b))
+		req, err := http.NewRequestWithContext(ctx, "POST", addr, bytes.NewBuffer(b))
 		if err != nil {
-			return rsp, err
+			return nil, err
 		}
 		req.Header.Set("Content-Type", "application/dns-message")
 
 		// Make an HTTP POST request to the DNS server with the DNS message as wire format bytes in the body.
-		resp, err := r.client.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
-			return rsp, err
+			return nil, err
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusMethodNotAllowed {
 			url, err := url.Parse(r.server)
 			if err != nil {
-				return rsp, err
+				return nil, err
 			}
 			url.RawQuery = fmt.Sprintf("dns=%v", base64.RawURLEncoding.EncodeToString(b))
 
 			req, err = http.NewRequestWithContext(ctx, "GET", url.String(), nil)
 			if err != nil {
-				return rsp, err
+				return nil, err
 			}
-			resp, err = r.client.Do(req)
+			resp, err = httpClient.Do(req)
 			if err != nil {
-				return rsp, err
+				return nil, err
 			}
 			defer resp.Body.Close()
 		}
 		if resp.StatusCode != http.StatusOK {
-			return rsp, fmt.Errorf("error from nameserver %s", resp.Status)
+			return nil, fmt.Errorf("error from nameserver %s", resp.Status)
 		}
 		rtt := time.Since(now)
 
@@ -112,30 +124,15 @@ func (r *DOHResolver) query(ctx context.Context, question dns.Question, flags Qu
 		// extract the binary response in DNS Message.
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return rsp, err
+			return nil, err
 		}
 
 		err = msg.Unpack(body)
 		if err != nil {
-			return rsp, err
+			return nil, err
 		}
-		// pack questions in output.
-		for _, q := range msg.Question {
-			ques := Question{
-				Name:  q.Name,
-				Class: dns.ClassToString[q.Qclass],
-				Type:  dns.TypeToString[q.Qtype],
-			}
-			rsp.Questions = append(rsp.Questions, ques)
-		}
-		// get the authorities and answers.
-		output := parseMessage(&msg, rtt, r.server)
-		rsp.Authorities = output.Authorities
-		rsp.Answers = output.Answers
-		rsp.Additional = output.Additional
-		rsp.Edns = output.Edns
 
-		if len(output.Answers) > 0 || msg.Rcode == dns.RcodeSuccess {
+		if msg.Rcode == dns.RcodeSuccess {
 			// stop iterating the searchlist.
 			break
 		}
@@ -143,15 +140,10 @@ func (r *DOHResolver) query(ctx context.Context, question dns.Question, flags Qu
 		// Check if context is done after each iteration
 		select {
 		case <-ctx.Done():
-			return rsp, ctx.Err()
+			return msg, ctx.Err()
 		default:
 			// Continue to next iteration
 		}
 	}
-	return rsp, nil
-}
-
-// Lookup implements the Resolver interface
-func (r *DOHResolver) Lookup(ctx context.Context, questions []dns.Question, flags QueryFlags) ([]Response, error) {
-	return ConcurrentLookup(ctx, questions, flags, r.query, r.resolverOptions.Logger)
+	return msg, nil
 }

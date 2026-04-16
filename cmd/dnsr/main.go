@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/domainr/dnsr"
+	"github.com/mr-torgue/dnsr"
 	"github.com/miekg/dns"
 	"github.com/wsxiaoys/terminal/color"
 	"golang.org/x/net/idna"

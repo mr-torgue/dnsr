@@ -14,12 +14,14 @@ const (
 	DefaultTCPPort = "53"
 	// DefaultDOQPort specifies the default port for a DNS server connecting over DNS over QUIC.
 	DefaultDOQPort   = "853"
-	UDPResolver      = "udp"
-	DOHResolver      = "doh"
-	TCPResolver      = "tcp"
-	DOTResolver      = "dot"
-	DNSCryptResolver = "dnscrypt"
-	DOQResolver      = "doq"
+	// DefaultDOHPort specifies the default port for a DNS server connecting over DNS over HTTPS.
+	DefaultDOHPort   = "443"
+	UDPClient      = "udp"
+	DOHClient      = "doh"
+	TCPClient      = "tcp"
+	DOTClient      = "dot"
+	DNSCryptClient = "dnscrypt"
+	DOQClient      = "doq"
 	// CommonRecordTypes is a string containing all common DNS record types
 	CommonRecordTypes = "A AAAA CNAME MX NS PTR SOA SRV TXT CAA"
 )

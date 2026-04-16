@@ -1,4 +1,4 @@
-package resolvers
+package clients
 
 import (
 	"encoding/hex"

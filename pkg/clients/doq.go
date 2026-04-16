@@ -16,9 +16,9 @@ import (
 
 // DOQClient represents the config options for setting up a DOQ based client.
 type DOQClient struct {
-	tls             *tls.Config
-	port			int
-	clientOptions Options
+	config ClientConfig
+	port		  int
+	fallbackClient: ClassicClient,
 }
 
 // splitHostPort splits a host:port string and handles IPv6 addresses properly.
@@ -34,55 +34,57 @@ func splitHostPort(addr string) (host, port string, err error) {
 }
 
 // NewDOQClient accepts a nameserver address and configures a DOQ based client.
-func NewDOQClient(server string, clientOpts Options) (Client, error) {
-	// Extract hostname from server address for TLS verification
-	// If TLSHostname is explicitly set via flag, use that; otherwise extract from server address
-	tlsHostname := clientOpts.TLSHostname
-	if tlsHostname == "" {
-		// server is in format "hostname:port", extract just the hostname
-		host, _, err := splitHostPort(server)
-		if err == nil {
-			tlsHostname = host
-		}
+func NewDOQClient(config ClientConfig) (Client, error) {
+	// create a fallback client
+	var classicClient = nil
+	if config.useUDPFallback {
+		classicClientConfig := config
+		classicClientConfig.clientType = models.UDPClient
+		classicClient, err := NewClassicClient(classicClientConfig, ClassicClientOpts{ false, false})
 	}
 
 	return &DOQClient{
-		tls: &tls.Config{
-			NextProtos:         []string{"doq"},
-			ServerName:         tlsHostname,
-			InsecureSkipVerify: clientOpts.InsecureSkipVerify,
-		},
+		config: config,
 		port:          port,
-		clientOptions: clientOpts,
+		fallbackClient: classicClient,
 	}, nil
 }
 
 // Lookup implements the Client interface
-func (r *DOQClient) Lookup(ctx context.Context, questions []dns.Question, flags QueryFlags) ([]Response, error) {
-	return ConcurrentLookup(ctx, questions, flags, r.query, r.clientOptions.Logger)
+func (c *DOQClient) Lookup(ctx context.Context, dst Destination, questions []dns.Question, flags QueryFlags) ([]*dns.Msg, error) {
+	return ConcurrentLookup(ctx, dst, questions, flags, c.query, c.config.Logger)
 }
 
 // query takes a dns.Question and sends them to DNS Server.
 // It parses the Response from the server in a custom output format.
-func (r *DOQClient) query(ctx context.Context, server string, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
-	var (
-		rsp      Response
-		messages = prepareMessages(question, flags, r.clientOptions.Ndots, r.clientOptions.SearchList)
-	)
+func (c *DOQClient) query(ctx context.Context, dst Destination, server string, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
+	var messages = prepareMessages(question, flags, r.clientOptions.Ndots, r.clientOptions.SearchList)
 
-	// 
+	// Extract hostname from server address for TLS verification
+	// If TLSHostname is explicitly set via flag, use that; otherwise extract from server address
+	tlsHostname := dst.TLSHostname
+	if tlsHostname == "" {
+		tlsHostname = dst.server // assumes that dst.server is NOT in format IP:port
+	}
+	tls = &tls.Config{
+			NextProtos:         []string{"doq"},
+			ServerName:         tlsHostname,
+			InsecureSkipVerify: clientOpts.InsecureSkipVerify,
+		}
 
-	session, err := quic.DialAddr(ctx, r.server, r.tls, nil)
+
+	addr := net.JoinHostPort(dst.server, c.port)
+	session, err := quic.DialAddr(ctx, dst.server, tls, nil)
 	if err != nil {
-		return rsp, err
+		return nil, err
 	}
 	defer session.CloseWithError(quic.ApplicationErrorCode(quic.NoError), "")
 
 	for _, msg := range messages {
-		r.clientOptions.Logger.Debug("Attempting to resolve",
+		c.config.Logger.Debug("Attempting to resolve",
 			"domain", msg.Question[0].Name,
-			"ndots", r.clientOptions.Ndots,
-			"nameserver", r.server,
+			"ndots", c.config.Ndots,
+			"nameserver", dst.server,
 		)
 
 		// ref: https://www.rfc-editor.org/rfc/rfc9250.html#name-dns-message-ids
@@ -91,23 +93,23 @@ func (r *DOQClient) query(ctx context.Context, server string, question dns.Quest
 		// get the DNS Message in wire format.
 		b, err := msg.Pack()
 		if err != nil {
-			return rsp, err
+			return nil, err
 		}
 		now := time.Now()
 
 		stream, err := session.OpenStreamSync(ctx)
 		if err != nil {
-			return rsp, err
+			return nil, err
 		}
 
 		msgLen := uint16(len(b))
 		msgLenBytes := []byte{byte(msgLen >> 8), byte(msgLen & 0xFF)}
 		if _, err = stream.Write(msgLenBytes); err != nil {
-			return rsp, err
+			return nil, err
 		}
 		// Make a QUIC request to the DNS server with the DNS message as wire format bytes in the body.
 		if _, err = stream.Write(b); err != nil {
-			return rsp, err
+			return nil, err
 		}
 
 		// The client MUST send the DNS query over the selected stream, and MUST
@@ -117,7 +119,7 @@ func (r *DOQClient) query(ctx context.Context, server string, question dns.Quest
 		// See: https://github.com/AdguardTeam/dnsproxy/blob/f901a5f4b9e8d5f143dce459067bc6614c6d927d/upstream/doq.go#L247-L254
 		err = stream.Close()
 		if err != nil {
-			return rsp, fmt.Errorf("unable to close quic stream: %w", err)
+			return nil, fmt.Errorf("unable to close quic stream: %w", err)
 		}
 
 		// Use a separate context with timeout for reading the response
@@ -135,42 +137,27 @@ func (r *DOQClient) query(ctx context.Context, server string, question dns.Quest
 		select {
 		case err := <-errChan:
 			if err != nil {
-				return rsp, err
+				return nil, err
 			}
 		case <-readCtx.Done():
-			return rsp, fmt.Errorf("timeout reading response")
+			return nil, fmt.Errorf("timeout reading response")
 		}
 
 		rtt := time.Since(now)
 
 		if len(buf) < 2 {
-			return rsp, fmt.Errorf("response too short: got %d bytes, need at least 2", len(buf))
+			return nil, fmt.Errorf("response too short: got %d bytes, need at least 2", len(buf))
 		}
 
 		packetLen := binary.BigEndian.Uint16(buf[:2])
 		if packetLen != uint16(len(buf[2:])) {
-			return rsp, fmt.Errorf("packet length mismatch")
+			return nil, fmt.Errorf("packet length mismatch")
 		}
 		if err = msg.Unpack(buf[2:]); err != nil {
-			return rsp, err
+			return nil, err
 		}
-		// pack questions in output.
-		for _, q := range msg.Question {
-			ques := Question{
-				Name:  q.Name,
-				Class: dns.ClassToString[q.Qclass],
-				Type:  dns.TypeToString[q.Qtype],
-			}
-			rsp.Questions = append(rsp.Questions, ques)
-		}
-		// get the authorities and answers.
-		output := parseMessage(&msg, rtt, r.server)
-		rsp.Authorities = output.Authorities
-		rsp.Answers = output.Answers
-		rsp.Additional = output.Additional
-		rsp.Edns = output.Edns
 
-		if len(output.Answers) > 0 || msg.Rcode == dns.RcodeSuccess {
+		if msg.Rcode == dns.RcodeSuccess {
 			// stop iterating the searchlist.
 			break
 		}
@@ -178,10 +165,10 @@ func (r *DOQClient) query(ctx context.Context, server string, question dns.Quest
 		// Check if context is done after each iteration
 		select {
 		case <-ctx.Done():
-			return rsp, ctx.Err()
+			return msg, ctx.Err()
 		default:
 			// Continue to next iteration
 		}
 	}
-	return rsp, nil
+	return msg, nil
 }
