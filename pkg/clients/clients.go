@@ -44,7 +44,7 @@ func NewClientConfig(logger *slog.Logger, clientType string, timeout time.Durati
 		clientType: 		clientType,
 		UseIPv4: 			false,
 		UseIPv6: 			false,
-		SearchList: 		[]{""},
+		SearchList: 		[]string{""},
 		Ndots: 				0,
 		Timeout: 			timeout,
 		Strategy: 			"",
