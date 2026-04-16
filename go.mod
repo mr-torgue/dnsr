@@ -1,4 +1,4 @@
-module github.com/domainr/dnsr
+module github.com/mr-torgue/dnsr
 
 go 1.25.5
 
