@@ -129,7 +129,7 @@ func NewExpiringWithTimeout(cap int, timeout time.Duration) *Resolver {
 
 // Resolve calls ResolveErr to find DNS records of type qtype for the domain qname.
 // For nonexistent domains (NXDOMAIN), it will return an empty, non-nil slice.
-func (r *Resolver) Resolve(qname, qtype string) RRs {
+func (r *Resolver) Resolve(qname, qtype string) (RRs, *dns.Msg) {
 	rrs, err := r.ResolveErr(qname, qtype)
 	if err == NXDOMAIN {
 		return emptyRRs
