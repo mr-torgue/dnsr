@@ -346,7 +346,6 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 		ECS     : "", // EDNS Client Subnet (e.g., "192.0.2.0/24" or "2001:db8::/32")
 	}
 
-	fmt.Printf("initiating DOQ resolver\n")
 	//rslvr, err := resolvers.NewDOQResolver(ns.Address, opts)
 	rslvr, err := clients.LoadClient(config)
 

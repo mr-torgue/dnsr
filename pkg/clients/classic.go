@@ -68,7 +68,7 @@ func (c *ClassicClient) Lookup(ctx context.Context, dst Destination, questions [
 // It parses the Response from the server in a custom output format.
 func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
 	var (
-		in      *dns.Msg
+		rsp      *dns.Msg
 		messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
 	)
 
@@ -88,6 +88,9 @@ func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns
 			"domain", msg.Question[0].Name,
 			"ndots", c.config.Ndots,
 			"nameserver", addr,
+			"flags", flags,
+			"RD", msg.MsgHdr.RecursionDesired,
+			"msg", msg.String(),
 		)
 
 		// Since the library doesn't include tcp.Dial time,
@@ -97,17 +100,18 @@ func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns
 		in, _, err := c.client.ExchangeContext(ctx, &msg, addr)
 		if err != nil {
 			if err == context.Canceled || err == context.DeadlineExceeded {
-				return in, err
+				return rsp, err
 			}
-			return in, err
+			return rsp, err
 		}
+		c.config.Logger.Debug("in", in.String(),)
 
 		// In case the response size exceeds 512 bytes (can happen with lot of TXT records),
 		// fallback to TCP as with UDP the response is truncated. Fallback mechanism is in-line with `dig`.
 		if in.Truncated {
-			if !c.config.useTCPFallback {
+			if !c.config.UseTCPFallback {
 				c.config.Logger.Debug("Truncated msg and TCP retransmission disabled!")
-				return in, fmt.Errorf("truncated response and TCP retransmission disabled")
+				return rsp, fmt.Errorf("truncated response and TCP retransmission disabled")
 			}
 			switch c.client.Net {
 			case "udp":
@@ -123,6 +127,7 @@ func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns
 			return c.query(ctx, dst, question, flags)
 		}
 
+		rsp = in
 		if in.Rcode == dns.RcodeSuccess {
 			// Stop iterating the searchlist.
 			break
@@ -131,10 +136,12 @@ func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns
 		// Check if context is done after each iteration
 		select {
 		case <-ctx.Done():
-			return in, ctx.Err()
+			return rsp, ctx.Err()
 		default:
 			// Continue to next iteration
 		}
 	}
-	return in, nil
+	c.config.Logger.Debug("Return here")
+	c.config.Logger.Debug("rsp", rsp.String(),)
+	return rsp, nil
 }

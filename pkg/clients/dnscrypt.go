@@ -34,9 +34,9 @@ func NewDNSCryptClient(config ClientConfig, opts DNSCryptClientOpts) (Client, er
 	// create a fallback client
 	var classicClient Client 
 	var err error
-	if config.useUDPFallback {
+	if config.UseUDPFallback {
 		classicClientConfig := config
-		classicClientConfig.clientType = models.UDPClient
+		classicClientConfig.ClientType = models.UDPClient
 		classicClient, err = NewClassicClient(classicClientConfig, ClassicClientOpts{ UseTLS: false, UseTCP: false })
 		if err != nil {
 			config.Logger.Info("Could not initialize fallback client in DNSCrypt!\n")
@@ -66,7 +66,7 @@ func (c *DNSCryptClient) query(ctx context.Context, dst Destination, question dn
 	clientInfo, err := c.client.Dial(dst.Server)
 	if err != nil {
 		// fallback if enabled
-		if c.config.useUDPFallback {
+		if c.config.UseUDPFallback {
 			return c.fallbackClient.query(ctx, dst, question, flags)
 		}
 		return nil, err

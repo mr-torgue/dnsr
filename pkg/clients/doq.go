@@ -39,9 +39,9 @@ func NewDOQClient(config ClientConfig) (Client, error) {
 	// create a fallback client
 	var classicClient Client
 	var err error
-	if config.useUDPFallback {
+	if config.UseUDPFallback {
 		classicClientConfig := config
-		classicClientConfig.clientType = models.UDPClient
+		classicClientConfig.ClientType = models.UDPClient
 		classicClient, err = NewClassicClient(classicClientConfig, ClassicClientOpts{ UseTLS: false, UseTCP: false })
 		if err != nil {
 			config.Logger.Info("Could not initialize fallback client in DoQ!\n")
@@ -85,7 +85,7 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, question dns.Que
 	session, err := quic.DialAddr(ctx, addr, tlsconf, nil)
 	if err != nil {
 		// fallback if enabled
-		if c.config.useUDPFallback {
+		if c.config.UseUDPFallback {
 			return c.fallbackClient.query(ctx, dst, question, flags)
 		}
 		return nil, err

@@ -7,13 +7,14 @@ import (
 	"fmt"
 
 	"github.com/mr-torgue/dnsr/pkg/models"
+	"github.com/mr-torgue/dnsr/pkg/utils"
 	"github.com/miekg/dns"
 )
 
 // ClientConfig represent a set of common options to configure a Client.
 type ClientConfig struct {
 	Logger             *slog.Logger
-	clientType		   string
+	ClientType		   string
 	UseIPv4            bool
 	UseIPv6            bool
 	SearchList         []string
@@ -21,8 +22,8 @@ type ClientConfig struct {
 	Timeout            time.Duration
 	Strategy           string
 	InsecureSkipVerify bool
-	useTCPFallback 	   bool
-	useUDPFallback     bool
+	UseTCPFallback 	   bool
+	UseUDPFallback     bool
 
 }
 
@@ -41,19 +42,30 @@ type Client interface {
 
 // Returns a new ClientConfig
 func NewClientConfig(logger *slog.Logger, clientType string, timeout time.Duration) (ClientConfig) {
+	// creat the logger here? or just check if nil
+	if logger == nil {
+		logger = utils.InitLogger(true)
+	}
+
 	return ClientConfig{
 		Logger: 			logger,
-		clientType: 		clientType,
+		ClientType: 		clientType,
 		UseIPv4: 			false,
 		UseIPv6: 			false,
-		SearchList: 		[]string{""},
+		SearchList: 		[]string{},
 		Ndots: 				0,
 		Timeout: 			timeout,
 		Strategy: 			"",
 		InsecureSkipVerify: true,
-		useTCPFallback: 	true,
-		useUDPFallback: 	true,
+		UseTCPFallback: 	true,
+		UseUDPFallback: 	true,
 	}
+}
+
+// String returns a string representation of the ClientConfig
+func (c ClientConfig) String() string {
+	return fmt.Sprintf("ClientConfig{Logger: %v, ClientType: %s, UseIPv4: %t, UseIPv6: %t, SearchList: %v, Ndots: %d, Timeout: %v, Strategy: %s, InsecureSkipVerify: %t, UseTCPFallback: %t, UseUDPFallback: %t}",
+		c.Logger, c.ClientType, c.UseIPv4, c.UseIPv6, c.SearchList, c.Ndots, c.Timeout, c.Strategy, c.InsecureSkipVerify, c.UseTCPFallback, c.UseUDPFallback)
 }
 
 // LoadClient loads the correct Client based on the configuration.
@@ -62,7 +74,7 @@ func LoadClient(config ClientConfig) (Client, error) {
 		client Client
 		err error
 	)
-	switch(config.clientType) {
+	switch(config.ClientType) {
 	case models.DOHClient:
 		config.Logger.Debug("initiating DOH client")
 		client, err = NewDOHClient(config)
@@ -87,6 +99,6 @@ func LoadClient(config ClientConfig) (Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Could not create client!")
 	}
-	config.Logger.Debug("Using the following configuration: %s\n", config)
+	config.Logger.Debug(fmt.Sprintf("Using the following configuration: %s", config.String()))
 	return client, nil
 }
