@@ -1,9 +1,7 @@
-# dnsr
-
-[![build status](https://img.shields.io/github/actions/workflow/status/domainr/dnsr/test.yaml.svg)](https://github.com/domainr/dnsr/actions)
-[![go.dev reference](https://img.shields.io/badge/go.dev-reference-blue.svg?logo=go&logoColor=white)](https://pkg.go.dev/github.com/domainr/dnsr)
-
-Iterative DNS resolver for [Go](https://golang.org/).
+# dnsr++
+Iterative DNS resolver for [Go](https://golang.org/). Inspired by [dnsr]() and [doggo]().
+dnsr++ extends on dnsr by including multiple clients, such as DoQ, DoT, dnscrypt, and DoH.
+It also leverages the [cache]() plugin instead of the default cache.
 
 The `Resolve` method on `dnsr.Resolver` queries DNS for given name and type (`A`, `NS`, `CNAME`, etc.). The resolver caches responses for queries, and liberally (aggressively?) returns DNS records for a given name, not waiting for slow or broken name servers.
 
@@ -16,10 +14,13 @@ In anticipation of creating a resolver plugin for CoreDNS, we make a few changes
 - [ ] Let dnsr return the dns.Msg object directly
 - [ ] Add support for UDP fragmentation
 - [ ] Add support for DNSSEC validation
+- [ ] Support for IPV6
 
 Issues:
 - [ ] PTR not working
 - [ ] Fix performance issues
+
+Make sure timeout works.
 
 ## Install
 

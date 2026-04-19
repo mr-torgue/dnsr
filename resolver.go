@@ -8,19 +8,28 @@ import (
 	"time"
 	"log/slog"
 
+	"github.com/coredns/coredns/plugin"
 	"github.com/mr-torgue/dnsr/pkg/models"
 	"github.com/mr-torgue/dnsr/pkg/clients"
 	"github.com/mr-torgue/dnsr/pkg/utils"
+	"github.com/coredns/coredns/plugin/pkg/cache"
+	"github.com/coredns/coredns/request"
 	"github.com/miekg/dns"
 )
 
-// DNS Resolution configuration.
+// DNS Resolution default configuration.
 var (
 	Timeout             = 2000 * time.Millisecond
 	TypicalResponseTime = 100 * time.Millisecond
 	MaxRecursion        = 10
 	MaxNameservers      = 2
 	MaxIPs              = 2
+	DefaultNttl			= 3600 * time.Second // 1 hours
+	DefaultPttl			= 14400 * time.Second // 4 hours
+	DefaultTCPRetry     = true
+	DefaultClassicRetry = true
+	DefaultDNSSEC	    = false
+	DefaultStrategy     = "parallel"
 )
 
 // Resolver errors.
@@ -31,35 +40,34 @@ var (
 	ErrMaxIPs       = fmt.Errorf("maximum name server IPs queried: %d", MaxIPs)
 	ErrNoARecords   = fmt.Errorf("no A records found for name server")
 	ErrNoResponse   = fmt.Errorf("no responses received")
+	ErrNegCache     = fmt.Errorf("cache hit was negative")
 	ErrTimeout      = fmt.Errorf("timeout expired") // TODO: Timeouter interface? e.g. func (e) Timeout() bool { return true }
 )
 
-// A ContextDialer implements the DialContext method, e.g. net.Dialer.
-type ContextDialer interface {
-	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+// Resolver implements a primitive, non-recursive, caching DNS resolver.
+type Resolver struct {
+	logger       *slog.Logger
+	timeout      time.Duration
+	cache        *Cache.Cache // uses the coredns cache plugin
+	cacheWriter  *cache.ResponseWriter 
+	pttl         time.Duration
+	nttl         time.Duration
+	clientType   string
+	client       *clients.Client // supported: udp, tcp, doh, doq, tls, and dnscrypt
+	tcpRetry     bool   // indicates if queries should be retried when the client fails
+	classicRetry bool   
+	dnssec       bool   // turn on/off dnssec validation
+	strategy     string // supported: sequential and parallel
 }
 
 // Option specifies a configuration option for a Resolver.
 type Option func(*Resolver)
 
-// WithCache specifies a cache with capacity cap.
-func WithCache(cap int) Option {
+// WithLogger specifies a logger
+func WithLogger(logger *slog.Logger) Option {
 	return func(r *Resolver) {
-		r.capacity = cap
-	}
-}
-
-// WithDialer specifies a network dialer.
-func WithDialer(d ContextDialer) Option {
-	return func(r *Resolver) {
-		r.dialer = d
-	}
-}
-
-// WithExpiry specifies that the Resolver will delete stale cache entries.
-func WithExpiry() Option {
-	return func(r *Resolver) {
-		r.expire = true
+		// TODO should we add some more checks?
+		r.logger = logger
 	}
 }
 
@@ -71,6 +79,25 @@ func WithTimeout(timeout time.Duration) Option {
 	}
 }
 
+func WithPttl(pttl time.Duration) Option {
+	return func(r *Resolver) {
+		r.pttl = pttl
+	}
+}
+
+func WithNttl(nttl time.Duration) Option {
+	return func(r *Resolver) {
+		r.nttl = nttl
+	}
+}
+
+// WithClientType specifies the clientType we use (default UDP).
+func WithClientType(clientType string) Option {
+	return func(r *Resolver) {
+		r.clientType = clientType
+	}
+}
+
 // WithTCPRetry specifies that requests should be retried with TCP if responses
 // are truncated. The retry must still complete within the timeout or context deadline.
 func WithTCPRetry() Option {
@@ -79,124 +106,127 @@ func WithTCPRetry() Option {
 	}
 }
 
-// Resolver implements a primitive, non-recursive, caching DNS resolver.
-type Resolver struct {
-	logger    *slog.Logger
-	dialer   ContextDialer
-	timeout  time.Duration
-	cache    *cache
-	capacity int
-	expire   bool
-	tcpRetry bool
+// WithClassicRetry indicates that if the DoQ/DoH/DNSCrypt model fails, we should fallback to UDP.
+// TODO: add support for DoT as well
+func WithClassicRetry() Option {
+	return func(r *Resolver) {
+		r.classicRetry = true
+	}
+}
+
+// WithDNSSEC specifies that DNSSEC validation should be used.
+func WithDNSSEC() Option {
+	return func(r *Resolver) {
+		r.dnssec = true
+	}
+}
+
+// WithStrategy specifies the NS strategy, which is either parallel or sequential.
+func WithStrategy(strategy string) Option {
+	return func(r *Resolver) {
+		r.strategy = DefaultStrategy
+		if strategy == "sequential" || strategy == "parallel" {
+			r.strategy = strategy
+		}
+	}
 }
 
 // NewResolver returns an initialized Resolver with options.
 // By default, the returned Resolver will have cache capacity 0
 // and the default network timeout (Timeout).
 func NewResolver(options ...Option) *Resolver {
-	r := &Resolver{timeout: Timeout}
+	// set default values
+	r := &Resolver{ 
+		timeout: Timeout, 
+		pttl: DefaultPttl, 
+		nttl: DefaultNttl, 
+		tcpRetry: DefaultTCPRetry, 
+		classicRetry: DefaultClassicRetry,
+		dnssec: DefaultDNSSEC, 
+		strategy: DefaultStrategy, 
+	}
+	// parse options
 	for _, o := range options {
 		o(r)
 	}
-	r.cache = newCache(r.capacity, r.expire)
-	r.logger = utils.InitLogger(true)
+	// initialize complex structures
+	if r.logger == nil {
+		r.logger = utils.InitLogger(true)
+	}
+	r.cache, r.cacheWriter = newCache(r.pttl, r.nttl)
+	if r.cache == nil || r.cacheWriter == nil {
+		r.logger.Debug("Could not initialize resolver cache!")
+		return nil
+	}
+	clientConfig := clients.NewClientConfig(r.logger, r.clientType, r.timeout)
+	r.client, err := LoadClient(clientConfig)
+	if err != nil {
+		r.logger.Debug("Could not initialize resolver client!")
+		return nil		
+	}
+	r.logger.Debug("Resolver Config:", r)
 	return r
 }
 
-// New initializes a Resolver with the specified cache size.
-// Deprecated: use NewResolver with Option(s) instead.
-func New(cap int) *Resolver {
-	return NewResolver(WithCache(cap))
+// newCache returns a Cache and ResponseWriter object.
+// We reuse the cache used in the CoreDNS plugin.
+func newCache(pttl time.Duration, nttl time.Duration) (*Cache, *ResponseWriter) {
+	c := New()
+	c.pttl = pttl
+	c.nttl = nttl
+
+	crr := &ResponseWriter{ResponseWriter: nil, Cache: c}
+
+	return c, crr
 }
 
-// NewWithTimeout initializes a Resolver with the specified cache size and timeout.
-// Deprecated: use NewResolver with Option(s) instead.
-func NewWithTimeout(cap int, timeout time.Duration) *Resolver {
-	return NewResolver(WithCache(cap), WithTimeout(timeout))
-}
-
-// NewExpiring initializes an expiring Resolver with the specified cache size.
-// Deprecated: use NewResolver with Option(s) instead.
-func NewExpiring(cap int) *Resolver {
-	return NewResolver(WithCache(cap), WithExpiry())
-}
-
-// NewExpiringWithTimeout initializes an expiring Resolved with the specified cache size and timeout.
-// Deprecated: use NewResolver with Option(s) instead.
-func NewExpiringWithTimeout(cap int, timeout time.Duration) *Resolver {
-	return NewResolver(WithCache(cap), WithTimeout(timeout), WithExpiry())
+// getState returns a new state (Request) for a given query.
+// The reason we don't use dns.Msg is that dns.Msg does not have a check for the DO flag.
+func getState(qname string, qtype string) (*request.Request) {
+	dtype := dns.StringToType[qtype]
+	if dtype == 0 {
+		dtype = dns.TypeA
+	}
+	var qmsg dns.Msg
+	qmsg.SetQuestion(qname, dtype)
+	return &request.Request{W: nil, Req: qmsg} // TODO can we do this?
 }
 
 // Resolve calls ResolveErr to find DNS records of type qtype for the domain qname.
 // For nonexistent domains (NXDOMAIN), it will return an empty, non-nil slice.
-func (r *Resolver) Resolve(qname, qtype string) (RRs, *dns.Msg) {
-	rrs, err := r.ResolveErr(qname, qtype)
-	if err == NXDOMAIN {
-		return emptyRRs
-	}
-	if err != nil {
-		return nil
-	}
-	return rrs
-}
-
-// ResolveErr finds DNS records of type qtype for the domain qname.
-// For nonexistent domains, it will return an NXDOMAIN error.
-// Specify an empty string in qtype to receive any DNS records found
-// (currently A, AAAA, NS, CNAME, SOA, and TXT).
-func (r *Resolver) ResolveErr(qname, qtype string) (RRs, error) {
+func (r *Resolver) Resolve(state *request.Request) (*dns.Msg, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
 	defer cancel()
-	return r.resolve(ctx, toLowerFQDN(qname), qtype, 0)
+	return r.resolve(ctx, state, 0)
 }
 
-// ResolveCtx finds DNS records of type qtype for the domain qname using
-// the supplied context. Requests may time out earlier if timeout is
-// shorter than a deadline set in ctx.
-// For nonexistent domains, it will return an NXDOMAIN error.
-// Specify an empty string in qtype to receive any DNS records found
-// (currently A, AAAA, NS, CNAME, SOA, and TXT).
-// Deprecated: use ResolveContext.
-func (r *Resolver) ResolveCtx(ctx context.Context, qname, qtype string) (RRs, error) {
-	return r.ResolveContext(ctx, qname, qtype)
-}
-
-// ResolveContext finds DNS records of type qtype for the domain qname using
-// the supplied context. Requests may time out earlier if timeout is
-// shorter than a deadline set in ctx.
-// For nonexistent domains, it will return an NXDOMAIN error.
-// Specify an empty string in qtype to receive any DNS records found
-// (currently A, AAAA, NS, CNAME, SOA, and TXT).
-func (r *Resolver) ResolveContext(ctx context.Context, qname, qtype string) (RRs, error) {
-	ctx, cancel := context.WithTimeout(ctx, r.timeout)
-	defer cancel()
-	return r.resolve(ctx, toLowerFQDN(qname), qtype, 0)
-}
-
-func (r *Resolver) resolve(ctx context.Context, qname, qtype string, depth int) (RRs, error) {
+// resolve recursively resolves unitl depth is reached or answer is found.
+func (r *Resolver) resolve(ctx context.Context, state *request.Request, depth int) (*dns.Msg, error) {
 	if depth++; depth > MaxRecursion {
-		logMaxRecursion(qname, qtype, depth)
+		r.logger.Debug("Max depth reached: ", depth)
 		return nil, ErrMaxRecursion
 	}
-	rrs, err := r.cacheGet(ctx, qname, qtype)
-	if err != nil {
-		return nil, err
+	qmsg = state.req
+
+	item := r.cache.getIfNotStale(time.Now().UTC(), state, "") // TODO server string
+	if item != nil {
+		r.logger.Debug("Cache hit for query: ", state.Qname(), " ", state.Qtype())
+		return item.toMsg(qmsg, time.Now().UTC(), state.Do(), qmsg.AuthenticatedData), nil // TODO reuse time or new time.Now().UTC()?
 	}
-	if len(rrs) > 0 {
-		return rrs, nil
-	}
-	logResolveStart(qname, qtype, depth)
+	r.logger.Debug("Resolving query: ", state.Qname(), " ", state.Qtype(), "with depth: ", depth)
 	start := time.Now()
-	rrs, err = r.iterateParents(ctx, qname, qtype, depth)
-	logResolveEnd(qname, qtype, rrs, depth, start, err)
-	return rrs, err
+	rmsg, err = r.iterateParents(ctx, state, depth)
+	return rmsg, err
 }
 
-func (r *Resolver) iterateParents(ctx context.Context, qname, qtype string, depth int) (RRs, error) {
-	chanRRs := make(chan RRs, MaxNameservers)
+// iteraterParents loops over the parents of the target.
+func (r *Resolver) iterateParents(ctx context.Context, state request.Request, depth int) (*dns.Msg, error) {
+	chanMsgs := make(chan *dns.Msg, MaxNameservers)
 	chanErrs := make(chan error, MaxNameservers)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	qname = state.Qname()
+	qmsg = state.req
 	for pname, ok := qname, true; ok; pname, ok = parent(pname) {
 		// If we’re looking for [foo.com,NS], then move on to the parent ([com,NS])
 		if pname == qname && qtype == "NS" {
@@ -210,7 +240,8 @@ func (r *Resolver) iterateParents(ctx context.Context, qname, qtype string, dept
 		}
 
 		// Get nameservers
-		nrrs, err := r.resolve(ctx, pname, "NS", depth)
+		nsState := r.getState(pname, "NS") // returns a new state
+		nsrsp, err := r.resolve(ctx, nsState, depth)
 		if err == NXDOMAIN || err == ErrTimeout || err == context.DeadlineExceeded {
 			return nil, err
 		}
@@ -219,32 +250,35 @@ func (r *Resolver) iterateParents(ctx context.Context, qname, qtype string, dept
 		}
 
 		// Check cache for specific queries
-		if len(nrrs) > 0 && qtype != "" {
-			rrs, err := r.cacheGet(ctx, qname, qtype)
-			if err != nil {
-				return nil, err
-			}
-			if len(rrs) > 0 {
-				return rrs, nil
+		if nsrsp != nil && qtype != "" {
+			item := c.cache.getIfNotStale(time.Now().UTC(), nsrsp, "") 
+			if item != nil {
+				if item.Rcode == dns.RcodeSuccess {
+					return item.toMsg(m, time.Now().UTC(), do, ad), nil
+				} else {
+					return nil, ErrNegCache
+				}
 			}
 		}
 
 		// Query all nameservers in parallel
 		count := 0
-		for i := 0; i < len(nrrs) && count < MaxNameservers; i++ {
-			nrr := nrrs[i]
-			if nrr.Type != "NS" {
+		
+		// RR format: https://github.com/miekg/dns/blob/d1539a788a12830620381c4cc6617762994f3fa1/dns.go#L31
+		for i := 0; i < len(nsrsp.Answer) && count < MaxNameservers; i++ {
+			nrr := nsrsp.Answer[i]
+			if nrr.Header().Rrtype != "NS" {
 				continue
 			}
 
 			go func(host string) {
-				rrs, err := r.exchange(ctx, host, qname, qtype, depth)
+				rsp, err := r.exchange(ctx, host, state, depth)
 				if err != nil {
 					chanErrs <- err
 				} else {
-					chanRRs <- rrs
+					chanRRs <- rsp
 				}
-			}(nrr.Value)
+			}(nrr.Value) // TODO not sure what to put here....
 
 			count++
 		}
@@ -256,15 +290,10 @@ func (r *Resolver) iterateParents(ctx context.Context, qname, qtype string, dept
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case rrs := <-chanRRs:
-				for _, nrr := range nrrs {
-					if nrr.Name == qname {
-						rrs = append(rrs, nrr)
-					}
-				}
+			case rrs := <-chanMsgs:
 				ctx := context.WithoutCancel(ctx)
 				cancel() // stop any other work here before recursing
-				return r.resolveCNAMEs(ctx, qname, qtype, rrs, depth)
+				return r.resolveCNAMEs(ctx, state, nsrsp, depth)
 			case err = <-chanErrs:
 				if err == NXDOMAIN {
 					return nil, err
@@ -279,7 +308,7 @@ func (r *Resolver) iterateParents(ctx context.Context, qname, qtype string, dept
 		// multi-label delegations where a parent zone delegates
 		// several labels down (e.g. in-addr.arpa).
 		// See https://github.com/domainr/dnsr/issues/148
-		if qtype == "NS" && queried > 0 {
+		if state.Qtype() == "NS" && queried > 0 {
 			return nil, err
 		}
 	}
@@ -287,13 +316,17 @@ func (r *Resolver) iterateParents(ctx context.Context, qname, qtype string, dept
 	return nil, ErrNoResponse
 }
 
-func (r *Resolver) exchange(ctx context.Context, host, qname, qtype string, depth int) (RRs, error) {
+// exchange retrieves the IP address of the nameserver (NS) and sends the query (state).
+// FIXME: support IPv6
+func (r *Resolver) exchange(ctx context.Context, host, state request.Request, depth int) (*dns.Msg, error) {
 	count := 0
-	arrs, err := r.resolve(ctx, host, "A", depth)
+	newState := r.newState(host, "A") // returns a new state
+	arrs, err := r.resolve(ctx, newState, depth)
+	// FIXME: should we do an IP address check here?
 	if err != nil {
 		return nil, err
 	}
-	for _, arr := range arrs {
+	for _, arr := range arrs.Answer {
 		// FIXME: support AAAA records?
 		if arr.Type != "A" {
 			continue
@@ -304,9 +337,9 @@ func (r *Resolver) exchange(ctx context.Context, host, qname, qtype string, dept
 			return nil, ErrMaxIPs
 		}
 
-		rrs, err := r.exchangeIP(ctx, host, arr.Value, qname, qtype, depth)
+		rsp, err := r.exchangeIP(ctx, host, arr.Value, state, depth) // TODO arr.value fix
 		if err == nil || err == NXDOMAIN || err == ErrTimeout {
-			return rrs, err
+			return rsp, err
 		}
 
 		if ctx.Err() != nil {
@@ -319,44 +352,8 @@ func (r *Resolver) exchange(ctx context.Context, host, qname, qtype string, dept
 
 var dialerDefault = &net.Dialer{}
 
-func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string, depth int) (RRs, error) {
-	dtype := dns.StringToType[qtype]
-	if dtype == 0 {
-		dtype = dns.TypeA
-	}
-	var qmsg dns.Msg
-	qmsg.SetQuestion(qname, dtype)
-	qmsg.MsgHdr.RecursionDesired = false
-
-
-	config := clients.NewClientConfig(r.logger, models.UDPClient, r.timeout)
-	flags := clients.QueryFlags{
-		AA: false, // Authoritative Answer
-		AD: false, // Authenticated Data
-		CD: false, // Checking Disabled
-		RD: false, // Recursion Desired
-		Z : false, // Reserved for future use
-		DO: false, // DNSSEC OK
-
-		// EDNS0 options
-		NSID    : false,   // Request Name Server Identifier
-		Cookie  : false,   // Request DNS Cookie
-		Padding : false,   // Request EDNS padding for privacy
-		EDE     : false,   // Request Extended DNS Errors
-		ECS     : "", // EDNS Client Subnet (e.g., "192.0.2.0/24" or "2001:db8::/32")
-	}
-
-	//rslvr, err := resolvers.NewDOQResolver(ns.Address, opts)
-	rslvr, err := clients.LoadClient(config)
-
-	//fmt.Printf("err: %s, rslvr: %s\n", err, rslvr)
-	//fmt.Printf("initiating DOQ resolver")
-	dst := clients.Destination{ Server: ip }
-	res, err := rslvr.Lookup(ctx, dst, qmsg.Question, flags)
-	fmt.Printf("err: %s, res: %s\n", err, res)
-
-
-
+func (r *Resolver) exchangeIP(ctx context.Context, host, ip, state request.Request, depth int) (*dns.Msg, error) {
+	
 	// Synchronously query this DNS server
 	start := time.Now()
 	timeout := r.timeout // belt and suspenders, since ctx has a deadline from ResolveErr
@@ -367,40 +364,18 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 		timeout = dl.Sub(start)
 	}
 
-	// client must finish within remaining timeout
-	client := &dns.Client{Timeout: timeout}
-
-	dialer := r.dialer
-	if dialer == nil {
-		dialer = dialerDefault
+	// lookup using the specified resolver client
+	// this code is agnostic to which client is used 
+	// ip should be WITHOUT port number, clients take care of this themselves
+	// retransmission is implemented in the client
+	flags := clients.QueryFlags{
+		AD: state.Req.AuthenticatedData, 
+		RD: false, // Recursion Desired
+		DO: state.Do(), // DNSSEC OK
 	}
-
-	addr := net.JoinHostPort(ip, "53")
-	conn, err := dialer.DialContext(ctx, "udp", addr)
-	var rmsg *dns.Msg
-	var dur time.Duration
-	if err == nil {
-		dconn := &dns.Conn{Conn: conn}
-		rmsg, dur, err = client.ExchangeWithConnContext(ctx, &qmsg, dconn)
-		conn.Close()
-	}
-	if r.tcpRetry && rmsg != nil && rmsg.MsgHdr.Truncated {
-		// Since we are doing another query, we need to recheck the deadline
-		if dl, ok := ctx.Deadline(); ok {
-			if start.After(dl.Add(-TypicalResponseTime)) { // bail if we can't finish in time (start is too close to deadline)
-				return nil, ErrTimeout
-			}
-			client.Timeout = dl.Sub(start)
-		}
-		// Retry with TCP
-		var tcpConn net.Conn
-		tcpConn, err = dialer.DialContext(ctx, "tcp", addr)
-		if err == nil {
-			dconn := &dns.Conn{Conn: tcpConn}
-			rmsg, dur, err = client.ExchangeWithConnContext(ctx, &qmsg, dconn)
-			tcpConn.Close()
-		}
-	}
+	dst := clients.Destination{ Server: ip, TLSHostname: host } // TLSHostname is ignored in case of UDP/TCP
+	rmsg, err := r.client.Lookup(ctx, dst, state.Req.Question, flags)
+	var dur time.Duration // TODO remove (?)
 
 	select {
 	case <-ctx.Done(): // Finished too late
@@ -413,31 +388,18 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 		return nil, err
 	}
 
-	// FIXME: cache NXDOMAIN responses responsibly
-	if rmsg.Rcode == dns.RcodeNameError {
-		var hasSOA bool
-		if qtype == "NS" {
-			for _, drr := range rmsg.Ns {
-				rr, ok := convertRR(drr, r.expire)
-				if !ok {
-					continue
-				}
-				if rr.Type == "SOA" {
-					hasSOA = true
-					break
-				}
-			}
+	// Cache the response message
+	valid, k := key(state.Name(), rmsg, mt, state.Do(), state.Req.CheckingDisabled) // TODO what is mt
+	if valid {
+		// Insert cache entry to positive cache
+		if rmsg.Rcode == dns.RcodeSuccess {
+			r.writer.set(rmsg, k, mt, r.cache.pttl) 
+		} else {
+			r.writer.set(rmsg, k, mt, r.cache.nttl) 
 		}
-		if !hasSOA {
-			r.cache.addNX(qname)
-			return nil, NXDOMAIN
-		}
-	} else if rmsg.Rcode != dns.RcodeSuccess {
-		return nil, errors.New(dns.RcodeToString[rmsg.Rcode]) // FIXME: should (*Resolver).exchange special-case this error?
+	} else {
+		r.logger.Info("Could not add to cache!")
 	}
-
-	// Cache records returned
-	rrs := r.saveDNSRR(host, qname, append(append(rmsg.Answer, rmsg.Ns...), rmsg.Extra...))
 
 	// Resolve IP addresses of nameservers if the response didn't include glue records.
 	// This handles out-of-bailiwick (OOB) referrals where the nameserver is outside the
@@ -445,11 +407,12 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 	// In OOB cases, the parent zone's server cannot provide glue records, so we must
 	// resolve the NS address separately. See https://github.com/domainr/dnsr/issues/174
 	if qtype == "NS" {
-		for _, rr := range rrs {
+		for _, rr := range Rmsg.Answer {
 			if rr.Type != "NS" {
 				continue
 			}
-			arrs, err := r.cacheGet(ctx, rr.Value, "A")
+			newstate := getState(rr.Value, "A")
+			item := r.cache.getIfNotStale(time.Now().UTC(), newstate, "") // TODO server string
 			if err == NXDOMAIN {
 				continue
 			}
@@ -483,70 +446,17 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 	return rrs, nil
 }
 
-func (r *Resolver) resolveCNAMEs(ctx context.Context, qname, qtype string, crrs RRs, depth int) (RRs, error) {
-	var rrs RRs
-	for _, crr := range crrs {
-		rrs = append(rrs, crr)
+// resolveCNAMEs recurses if it receives a CNAME rr.
+// returns both the CNAME and requested record
+func (r *Resolver) resolveCNAMEs(ctx context.Context, state request.Request, cmsg *dns.Msg, depth int) (*dns.Msg, error) {
+	for _, crr := range cmsg.Answer {
 		if crr.Type != "CNAME" || crr.Name != qname {
 			continue
 		}
 		logCNAME(crr.String(), depth)
-		crrs, _ := r.resolve(ctx, crr.Value, qtype, depth)
-		for _, rr := range crrs {
-			r.cache.add(qname, rr)
-			rrs = append(rrs, rr)
-		}
+		newstate = getState(crr.Value, qtype)
+		crmsg, _ := r.resolve(ctx, newState, depth)
+		crmsg.CopyTo(cmsg) // Todo verify if this works
 	}
-	return rrs, nil
-}
-
-// saveDNSRR saves 1 or more DNS records to the resolver cache.
-func (r *Resolver) saveDNSRR(host, qname string, drrs []dns.RR) RRs {
-	var rrs RRs
-	cl := dns.CountLabel(qname)
-	for _, drr := range drrs {
-		rr, ok := convertRR(drr, r.expire)
-		if !ok {
-			continue
-		}
-		if dns.CountLabel(rr.Name) < cl && dns.CompareDomainName(qname, rr.Name) < 2 {
-			// fmt.Fprintf(os.Stderr, "Warning: potential poisoning from %s: %s -> %s\n", host, qname, drr.String())
-			continue
-		}
-		r.cache.add(rr.Name, rr)
-		if rr.Name != qname {
-			continue
-		}
-		rrs = append(rrs, rr)
-	}
-	return rrs
-}
-
-// cacheGet returns a randomly ordered slice of DNS records.
-func (r *Resolver) cacheGet(ctx context.Context, qname, qtype string) (RRs, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-	}
-	any := r.cache.get(qname)
-	if any == nil {
-		any = rootCache.get(qname)
-	}
-	if any == nil {
-		return nil, nil
-	}
-	if len(any) == 0 {
-		return nil, NXDOMAIN
-	}
-	rrs := make(RRs, 0, len(any))
-	for _, rr := range any {
-		if qtype == "" || rr.Type == qtype {
-			rrs = append(rrs, rr)
-		}
-	}
-	if len(rrs) == 0 && (qtype != "" && qtype != "NS") {
-		return nil, nil
-	}
-	return rrs, nil
+	return cmsg, nil
 }
