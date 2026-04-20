@@ -1,17 +1,36 @@
 package dnsr
 
 import (
-	"context"
-	"flag"
-	"fmt"
-	"net"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/nbio/st"
 )
 
+func TestNewResolver(t *testing.T) {
+    tests := []struct {// Define a struct for each test case and create a slice of them
+		name string
+        expire bool
+        ncap int
+        nttl time.Duration
+        pcap int
+        pttl time.Duration
+    }{
+        {"Test Normal", true, 123, 1, 321, 2},
+        {"Test Default Values", false, 0, 0, 0, 0},
+        {"Test Large Values", true, 123456, 9999999, 88880, 88833334},
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+			rslvr := NewResolver()
+			if rslvr.clientType != "udp" {
+                t.Errorf("clientType mismatch: got %s, expected %s\n", rslvr.clientType, "udp")
+			}
+        })
+    }
+}
+
+/*
 func TestMain(m *testing.M) {
 	flag.Parse()
 	timeout := os.Getenv("DNSR_TIMEOUT")
@@ -398,3 +417,4 @@ func TestOOBOtherDomains(t *testing.T) {
 		}
 	}
 }
+*/

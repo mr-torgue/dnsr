@@ -81,8 +81,13 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, question dns.Que
 		}
 
 
+	c.config.Logger.Debug("hello")
 	addr := net.JoinHostPort(dst.Server, c.port)
-	session, err := quic.DialAddr(ctx, addr, tlsconf, nil)
+	// Use a separate context for connecting
+	readCtx, cancelConnect := context.WithTimeout(ctx, c.config.Timeout)
+	defer cancelConnect()
+	session, err := quic.DialAddr(readCtx, addr, tlsconf, nil)
+	c.config.Logger.Debug("err", err)
 	if err != nil {
 		// fallback if enabled
 		if c.config.UseUDPFallback {
@@ -135,8 +140,8 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, question dns.Que
 		}
 
 		// Use a separate context with timeout for reading the response
-		readCtx, cancel := context.WithTimeout(ctx, c.config.Timeout)
-		defer cancel()
+		readCtx, cancelRead := context.WithTimeout(ctx, c.config.Timeout)
+		defer cancelRead()
 
 		var buf []byte
 		errChan := make(chan error, 1)

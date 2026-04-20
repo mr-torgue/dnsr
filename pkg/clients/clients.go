@@ -54,7 +54,7 @@ func NewClientConfig(logger *slog.Logger, clientType string, timeout time.Durati
 		UseIPv6: 			false,
 		SearchList: 		[]string{},
 		Ndots: 				0,
-		Timeout: 			timeout,
+		Timeout: 			timeout * time.Second,
 		Strategy: 			"",
 		InsecureSkipVerify: true,
 		UseTCPFallback: 	true,

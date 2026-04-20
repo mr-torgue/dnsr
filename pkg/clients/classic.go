@@ -104,7 +104,6 @@ func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns
 			}
 			return rsp, err
 		}
-		c.config.Logger.Debug("in", in.String(),)
 
 		// In case the response size exceeds 512 bytes (can happen with lot of TXT records),
 		// fallback to TCP as with UDP the response is truncated. Fallback mechanism is in-line with `dig`.

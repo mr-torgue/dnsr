@@ -12,8 +12,8 @@ import (
 )
 
 func TestNewClientConfig(t *testing.T) {
-	wantType := "*clients.ClassicClient"
-	config := clients.NewClientConfig(nil, "udp", 5)
+	wantType := "*clients.DOQClient"
+	config := clients.NewClientConfig(nil, "doq", 5)
 	client, err := clients.LoadClient(config)
 	gotType := fmt.Sprintf("%T", client)
 	if err != nil {
@@ -22,7 +22,12 @@ func TestNewClientConfig(t *testing.T) {
 	if gotType != wantType {// Check the result
 		t.Errorf("Client not initialized: got %s, expected %s\n", gotType, wantType)
 	}	
-	// check opts
+	if config.ClientType != "doq" {
+		t.Errorf("config.ClientType is incorrect: got %s, expected %s\n", config.ClientType, "doq")
+	}
+	if config.Timeout != 5 * time.Second {
+		t.Errorf("config.Timeout is incorrect: got %d, expected %d\n", config.Timeout, 5 * time.Second)
+	}
 }
 
 
@@ -36,16 +41,16 @@ func TestLookup(t *testing.T) {
 		rcode int
 		expected string // uses string.contains, which is not optimal
     }{
-        {"Client should return A record of google.com", "google.com", "A", "8.8.8.8", true, dns.RcodeSuccess, "142.250.207.14"},
-        {"Client should return A record of tsting.com", "testing.com", "A", "8.8.8.8", true, dns.RcodeSuccess, "104.26.5.28"},
-        {"Client should return .com auth name servers", "testing.com", "A", "198.41.0.4", false, dns.RcodeSuccess, "a.gtld-servers.net."},
+        {"Client should return A record of google.com", "google.com", "A", "9.9.9.9", true, dns.RcodeSuccess, "142.251.222.14"},
+        {"Client should return A record of testing.com", "testing.com", "A", "9.9.9.9", true, dns.RcodeSuccess, "104.26.5.28"},
+        {"Client should return A record of testing.com by using the classic fallback", "testing.com", "A", "8.8.8.8", true, dns.RcodeSuccess, "104.26.5.28"},
     }
-	config := clients.NewClientConfig(nil, "udp", 5*time.Second)
+	config := clients.NewClientConfig(nil, "doq", 2)
 	client, _ := clients.LoadClient(config)
 
     for _, tt := range tests {// Loop over each test case
         t.Run(tt.name, func(t *testing.T) {// Run each case as a subtest
-			ctx, _ := context.WithTimeout(context.Background(), 2*time.Second)
+			ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 			dst := clients.Destination{ Server: tt.ns}
 			// create the question
 			var qmsg dns.Msg

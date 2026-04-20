@@ -15,7 +15,7 @@ import (
 var (
 	verbose  bool
 	tcpRetry bool
-	resolver = dnsr.NewResolver(dnsr.WithCache(1000))
+	resolver = dnsr.NewResolver()
 )
 
 func init() {
@@ -47,9 +47,6 @@ func main() {
 	if tcpRetry {
 		resolver = dnsr.NewResolver(dnsr.WithTCPRetry())
 	}
-	if verbose {
-		dnsr.DebugLogger = os.Stderr
-	}
 	var wg sync.WaitGroup
 	start := time.Now()
 	for _, name := range args {
@@ -72,22 +69,23 @@ func query(name, qtype string) {
 		color.Fprintf(os.Stderr, "Invalid IDN domain name: %s\n", name)
 		os.Exit(1)
 	}
+	dtype := dns.StringToType[qtype]
+	if dtype == 0 {
+		dtype = dns.TypeA
+	}
+	var qmsg dns.Msg
+	qmsg.SetQuestion(qname, dtype)
 
-	rrs, err := resolver.ResolveErr(qname, qtype)
+	rsp, err := resolver.Resolve(&qmsg)
 
 	color.Printf("\n")
-	if len(rrs) > 0 {
-		color.Printf("@{g};; RESULTS:\n")
-	}
-	for _, rr := range rrs {
-		color.Printf("@{g}%s\n", rr.String())
-	}
+	color.Printf("@{g}%s\n", rsp.String())
 
 	if err != nil {
 		color.Printf("@{r};; %s\t%s\t%s\n", err, name, qtype)
-	} else if rrs == nil {
+	} else if rsp == nil {
 		color.Printf("@{y};; NIL\t%s\t%s\n", name, qtype)
-	} else if len(rrs) > 0 {
+	} else if len(rsp.Answer) > 0 {
 		color.Printf("@{g};; TRUE\t%s\t%s\n", name, qtype)
 	} else {
 		color.Printf("@{r};; FALSE\t%s\t%s\n", name, qtype)
