@@ -2,7 +2,7 @@ package clients
 
 import (
 	"context"
-//	"time"
+	"fmt"
 
 	"github.com/mr-torgue/dnsr/pkg/models"
 	"github.com/ameshkov/dnscrypt/v2"
@@ -12,7 +12,7 @@ import (
 // DNSCryptClient represents the config options for setting up a Client.
 type DNSCryptClient struct {
 	client          *dnscrypt.Client
-	config   		ClientConfig
+	config   		*ClientConfig
 	opts			DNSCryptClientOpts
 	fallbackClient  Client
 }
@@ -23,23 +23,23 @@ type DNSCryptClientOpts struct {
 }
 
 // NewDNSCryptClient accepts a list of nameservers and configures a DNS client.
-func NewDNSCryptClient(config ClientConfig, opts DNSCryptClientOpts) (Client, error) {
+func NewDNSCryptClient(config *ClientConfig, opts DNSCryptClientOpts) (Client, error) {
 	net := "udp"
 	if opts.UseTCP {
 		net = "tcp"
 	}
 
-	client := &dnscrypt.Client{Net: net, Timeout: config.Timeout, UDPSize: 4096}
+	client := &dnscrypt.Client{Net: net, Timeout: config.timeout, UDPSize: 4096}
 
 	// create a fallback client
 	var classicClient Client 
 	var err error
-	if config.UseUDPFallback {
+	if config.useUDPFallback {
 		classicClientConfig := config
-		classicClientConfig.ClientType = models.UDPClient
+		classicClientConfig.clientType = models.UDPClient
 		classicClient, err = NewClassicClient(classicClientConfig, ClassicClientOpts{ UseTLS: false, UseTCP: false })
 		if err != nil {
-			config.Logger.Info("Could not initialize fallback client in DNSCrypt!\n")
+			config.logger.Info("Could not initialize fallback client in DNSCrypt!\n")
 		}
 	}
 
@@ -53,30 +53,33 @@ func NewDNSCryptClient(config ClientConfig, opts DNSCryptClientOpts) (Client, er
 
 // Lookup implements the Client interface
 func (c *DNSCryptClient) Lookup(ctx context.Context, dst Destination, questions []dns.Question, flags QueryFlags) ([]*dns.Msg, error) {
-	return ConcurrentLookup(ctx, dst, questions, flags, c.query, c.config.Logger)
+	return ConcurrentLookup(ctx, dst, questions, flags, c.query, c.config.logger)
 }
 
 // query performs a single DNS query
 func (c *DNSCryptClient) query(ctx context.Context, dst Destination, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
 	var (
 		in      *dns.Msg
-		messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
+		messages = prepareMessages(question, flags, c.config.ndots, c.config.searchList)
 	)
 
-	clientInfo, err := c.client.Dial(dst.Server)
+	addr := "sdns://" + dst.Server
+	clientInfo, err := c.client.Dial(addr)
 	if err != nil {
 		// fallback if enabled
-		if c.config.UseUDPFallback {
+		if c.config.useUDPFallback {
+			c.config.logger.Debug("Cannot reach using dnscrypt, falling back to UDP!")
 			return c.fallbackClient.query(ctx, dst, question, flags)
 		}
+		c.config.logger.Debug(fmt.Sprintf("Cannot reach using dnscrypt and no fallback enabled! Error: %s", err))
 		return nil, err
 	}
 
 	for _, msg := range messages {
-		c.config.Logger.Debug("Attempting to resolve",
+		c.config.logger.Debug("Attempting to resolve",
 			"domain", msg.Question[0].Name,
-			"ndots", c.config.Ndots,
-			"nameserver", dst.Server,
+			"ndots", c.config.ndots,
+			"nameserver", addr,
 		)
 
 		//now := time.Now()

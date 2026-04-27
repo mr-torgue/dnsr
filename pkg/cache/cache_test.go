@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mr-torgue/dnsr/pkg/cache"
 	"github.com/coredns/coredns/plugin/test"
 	"github.com/miekg/dns"
 )
@@ -39,47 +38,47 @@ func TestNewCache(t *testing.T) {
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-			options := []cache.Option{}
+			options := []Option{}
 			if tt.expire {
-				options = append(options, cache.WithExpire())
+				options = append(options, WithExpire())
 			}
 			if tt.ncap > 0 {
-				options = append(options, cache.WithNcap(tt.ncap))
+				options = append(options, WithNcap(tt.ncap))
 			} else {
-				tt.ncap = cache.DefaultNcap
+				tt.ncap = DefaultNcap
 			}
 			if tt.nttl > 0 {
-				options = append(options, cache.WithNttl(tt.nttl))
+				options = append(options, WithNttl(tt.nttl))
 			} else {
-				tt.nttl = cache.DefaultNttl
+				tt.nttl = DefaultNttl
 			}
 			if tt.pcap > 0 {
-				options = append(options, cache.WithPcap(tt.pcap))
+				options = append(options, WithPcap(tt.pcap))
 			} else {
-				tt.pcap = cache.DefaultPcap
+				tt.pcap = DefaultPcap
 			}
 			if tt.pttl > 0 {
-				options = append(options, cache.WithPttl(tt.pttl))
+				options = append(options, WithPttl(tt.pttl))
 			} else {
-				tt.pttl = cache.DefaultPttl
+				tt.pttl = DefaultPttl
 			}
-			c := cache.NewCache(options...)
+			c := NewCache(options...)
 
 
-            if c.Expire() != tt.expire {
-                t.Errorf("expire mismatch: got %t, expected %t\n", c.Expire(), tt.expire)
+            if c.expire != tt.expire {
+                t.Errorf("expire mismatch: got %t, expected %t\n", c.expire, tt.expire)
             }
-            if c.NCap() != tt.ncap {
-                t.Errorf("ncap mismatch: got %d, expected %d\n", c.NCap(), tt.ncap)
+            if c.ncap != tt.ncap {
+                t.Errorf("ncap mismatch: got %d, expected %d\n", c.ncap, tt.ncap)
             }            
-			if c.NTtl() != (tt.nttl * time.Second) {
-                t.Errorf("nttl mismatch: got %d, expected %d\n", c.NTtl(), tt.nttl)
+			if c.nttl != (tt.nttl * time.Second) {
+                t.Errorf("nttl mismatch: got %d, expected %d\n", c.nttl, tt.nttl)
             }            
-			if c.PCap() != tt.pcap {
-                t.Errorf("pcap mismatch: got %d, expected %d\n", c.PCap(), tt.pcap)
+			if c.pcap != tt.pcap {
+                t.Errorf("pcap mismatch: got %d, expected %d\n", c.pcap, tt.pcap)
             }            
-			if c.PTtl() != (tt.pttl * time.Second) {
-                t.Errorf("pttl mismatch: got %d, expected %d\n", c.PTtl(), tt.pttl)
+			if c.pttl != (tt.pttl * time.Second) {
+                t.Errorf("pttl mismatch: got %d, expected %d\n", c.pttl, tt.pttl)
             }
         })
     }
@@ -363,7 +362,7 @@ func TestCacheInsertion(t *testing.T) {
 
 	for _, tc := range cacheTestCases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := cache.NewCache()
+			c := NewCache()
 
 			m := tc.in.Msg()
 			m = cacheMsg(m, tc.in)

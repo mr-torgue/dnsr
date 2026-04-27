@@ -18,22 +18,22 @@ import (
 
 // DOHClient represents the config options for setting up a DOH based client.
 type DOHClient struct {
-	config ClientConfig
+	config *ClientConfig
 	port		 string
 	fallbackClient Client
 }
 
 // NewDOHClient returns a DOHClient
-func NewDOHClient(config ClientConfig) (Client, error) {
+func NewDOHClient(config *ClientConfig) (Client, error) {
 	// create a fallback client
 	var classicClient Client
 	var err error
-	if config.UseUDPFallback {
+	if config.useUDPFallback {
 		classicClientConfig := config
-		classicClientConfig.ClientType = models.UDPClient
+		classicClientConfig.clientType = models.UDPClient
 		classicClient, err = NewClassicClient(classicClientConfig, ClassicClientOpts{ UseTLS: false, UseTCP: false })
 		if err != nil {
-			config.Logger.Info("Could not initialize fallback client in DoH!\n")
+			config.logger.Info("Could not initialize fallback client in DoH!\n")
 		}
 	}
 
@@ -46,7 +46,7 @@ func NewDOHClient(config ClientConfig) (Client, error) {
 
 // Lookup implements the Client interface
 func (c *DOHClient) Lookup(ctx context.Context, dst Destination, questions []dns.Question, flags QueryFlags) ([]*dns.Msg, error) {
-	return ConcurrentLookup(ctx, dst, questions, flags, c.query, c.config.Logger)
+	return ConcurrentLookup(ctx, dst, questions, flags, c.query, c.config.logger)
 }
 
 // query takes a dns.Question and sends them to DNS Server.
@@ -54,14 +54,14 @@ func (c *DOHClient) Lookup(ctx context.Context, dst Destination, questions []dns
 func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
 	var (
 		//msg      *dns.Msg
-		messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
+		messages = prepareMessages(question, flags, c.config.ndots, c.config.searchList)
 	)
 	
 	// do basic validation and setup https connection
-	addr := net.JoinHostPort(dst.Server, c.port)
+	addr := "https://" + net.JoinHostPort(dst.Server, c.port)
 	u, err := url.ParseRequestURI(addr)
 	if err != nil {
-		return nil, fmt.Errorf("%s is not a valid HTTPS nameserver", addr)
+		return nil, fmt.Errorf("%s is not a valid HTTPS nameserver: %s", addr, err)
 	}
 	if u.Scheme != "https" {
 		return nil, fmt.Errorf("missing https in %s", addr)
@@ -69,22 +69,23 @@ func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Que
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{
 		ServerName:         dst.TLSHostname,
-		InsecureSkipVerify: c.config.InsecureSkipVerify,
+		InsecureSkipVerify: c.config.insecureSkipVerify,
 	}
 	httpClient := &http.Client{
-		Timeout:   c.config.Timeout,
+		Timeout:   c.config.timeout,
 		Transport: transport,
 	}
 
 	for _, msg := range messages {
-		c.config.Logger.Debug("Attempting to resolve",
+		c.config.logger.Debug("Attempting to resolve",
 			"domain", msg.Question[0].Name,
-			"ndots", c.config.Ndots,
+			"ndots", c.config.ndots,
 			"nameserver", addr,
 		)
 		// get the DNS Message in wire format.
 		b, err := msg.Pack()
 		if err != nil {
+			c.config.logger.Debug("Could not pack msg %s. Error: %s", msg.String(), err)
 			return nil, err
 		}
 		//now := time.Now()
@@ -93,7 +94,7 @@ func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Que
 		req, err := http.NewRequestWithContext(ctx, "POST", addr, bytes.NewBuffer(b))
 		if err != nil {
 			// fallback if enabled
-			if c.config.UseUDPFallback {
+			if c.config.useUDPFallback {
 				return c.fallbackClient.query(ctx, dst, question, flags)
 			}
 			return nil, err
@@ -131,7 +132,7 @@ func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Que
 
 		// if debug, extract the response headers
 		for header, value := range resp.Header {
-			c.config.Logger.Debug("DOH response header", header, value)
+			c.config.logger.Debug("DOH response header", header, value)
 		}
 
 		// extract the binary response in DNS Message.
@@ -142,7 +143,11 @@ func (c *DOHClient) query(ctx context.Context, dst Destination, question dns.Que
 
 		err = msg.Unpack(body)
 		if err != nil {
-			return nil, err
+			c.config.logger.Debug("Could not unpack body")
+			//if c.config.useUDPFallback {
+			//	return c.fallbackClient.query(ctx, dst, question, flags)
+			//}
+			return nil, fmt.Errorf("unpack error. Server does not support DoH.")
 		}
 
 		if msg.Rcode == dns.RcodeSuccess {

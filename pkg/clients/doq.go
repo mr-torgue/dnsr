@@ -17,7 +17,7 @@ import (
 
 // DOQClient represents the config options for setting up a DOQ based client.
 type DOQClient struct {
-	config ClientConfig
+	config *ClientConfig
 	port		  string
 	fallbackClient Client
 }
@@ -35,16 +35,25 @@ func splitHostPort(addr string) (host, port string, err error) {
 }
 
 // NewDOQClient accepts a nameserver address and configures a DOQ based client.
-func NewDOQClient(config ClientConfig) (Client, error) {
+func NewDOQClient(config *ClientConfig) (Client, error) {
 	// create a fallback client
 	var classicClient Client
 	var err error
-	if config.UseUDPFallback {
-		classicClientConfig := config
-		classicClientConfig.ClientType = models.UDPClient
+	if config.useUDPFallback {
+		// create new client
+		classicClientConfig := NewClientConfig(
+			WithLogger(config.logger),
+			WithClientType(models.UDPClient), 
+			WithTimeout(config.timeout), 
+			WithUseIPv4(config.useIPv4), 
+			WithUseIPv6(config.useIPv6),
+			WithInsecureSkipVerify(config.insecureSkipVerify),
+			WithUseTCPFallback(config.useTCPFallback),
+			WithUseUDPFallback(config.useUDPFallback),
+		)
 		classicClient, err = NewClassicClient(classicClientConfig, ClassicClientOpts{ UseTLS: false, UseTCP: false })
 		if err != nil {
-			config.Logger.Info("Could not initialize fallback client in DoQ!\n")
+			config.logger.Info("Could not initialize fallback client in DoQ!\n")
 		}
 	}
 
@@ -57,7 +66,7 @@ func NewDOQClient(config ClientConfig) (Client, error) {
 
 // Lookup implements the Client interface
 func (c *DOQClient) Lookup(ctx context.Context, dst Destination, questions []dns.Question, flags QueryFlags) ([]*dns.Msg, error) {
-	return ConcurrentLookup(ctx, dst, questions, flags, c.query, c.config.Logger)
+	return ConcurrentLookup(ctx, dst, questions, flags, c.query, c.config.logger)
 }
 
 // query takes a dns.Question and sends them to DNS Server.
@@ -65,7 +74,7 @@ func (c *DOQClient) Lookup(ctx context.Context, dst Destination, questions []dns
 func (c *DOQClient) query(ctx context.Context, dst Destination, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
 	var (
 		//msg      *dns.Msg
-		messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
+		messages = prepareMessages(question, flags, c.config.ndots, c.config.searchList)
 	)
 
 	// Extract hostname from server address for TLS verification
@@ -77,30 +86,30 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, question dns.Que
 	tlsconf := &tls.Config{
 			NextProtos:         []string{"doq"},
 			ServerName:         dst.TLSHostname,
-			InsecureSkipVerify: c.config.InsecureSkipVerify,
+			InsecureSkipVerify: c.config.insecureSkipVerify,
 		}
 
 
-	c.config.Logger.Debug("hello")
 	addr := net.JoinHostPort(dst.Server, c.port)
 	// Use a separate context for connecting
-	readCtx, cancelConnect := context.WithTimeout(ctx, c.config.Timeout)
+	readCtx, cancelConnect := context.WithTimeout(ctx, c.config.timeout)
 	defer cancelConnect()
 	session, err := quic.DialAddr(readCtx, addr, tlsconf, nil)
-	c.config.Logger.Debug("err", err)
 	if err != nil {
 		// fallback if enabled
-		if c.config.UseUDPFallback {
+		if c.config.useUDPFallback {
+			c.config.logger.Debug("Cannot reach over QUIC, falling back to UDP!")
 			return c.fallbackClient.query(ctx, dst, question, flags)
 		}
+		c.config.logger.Debug(fmt.Sprintf("Cannot reach over QUIC and no fallback enabled! Error: %s", err))
 		return nil, err
 	}
 	defer session.CloseWithError(quic.ApplicationErrorCode(quic.NoError), "")
 
 	for _, msg := range messages {
-		c.config.Logger.Debug("Attempting to resolve",
+		c.config.logger.Debug("Attempting to resolve",
 			"domain", msg.Question[0].Name,
-			"ndots", c.config.Ndots,
+			"ndots", c.config.ndots,
 			"nameserver", addr,
 		)
 
@@ -140,7 +149,7 @@ func (c *DOQClient) query(ctx context.Context, dst Destination, question dns.Que
 		}
 
 		// Use a separate context with timeout for reading the response
-		readCtx, cancelRead := context.WithTimeout(ctx, c.config.Timeout)
+		readCtx, cancelRead := context.WithTimeout(ctx, c.config.timeout)
 		defer cancelRead()
 
 		var buf []byte

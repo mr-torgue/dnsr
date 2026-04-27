@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+  	"github.com/stretchr/testify/assert"
 )
 
 func TestNewResolver(t *testing.T) {
@@ -22,10 +23,33 @@ func TestNewResolver(t *testing.T) {
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-			rslvr := NewResolver()
-			if rslvr.clientType != "udp" {
-                t.Errorf("clientType mismatch: got %s, expected %s\n", rslvr.clientType, "udp")
+			options := []Option{}
+			if tt.expire {
+				options = append(options, WithExpire())
 			}
+			if tt.ncap > 0 {
+				options = append(options, WithNcap(tt.ncap))
+			} else {
+				tt.ncap = DefaultNcap
+			}
+			if tt.nttl > 0 {
+				options = append(options, WithNttl(tt.nttl))
+			} else {
+				tt.nttl = DefaultNttl
+			}
+			if tt.pcap > 0 {
+				options = append(options, WithPcap(tt.pcap))
+			} else {
+				tt.pcap = DefaultPcap
+			}
+			if tt.pttl > 0 {
+				options = append(options, WithPttl(tt.pttl))
+			} else {
+				tt.pttl = DefaultPttl
+			}
+			c := NewCache(options...)
+			rslvr := NewResolver()
+			assert.Equal(t, rslvr.clientType, "udp", "Types should match")
         })
     }
 }

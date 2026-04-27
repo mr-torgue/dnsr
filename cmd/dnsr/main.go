@@ -15,7 +15,7 @@ import (
 var (
 	verbose  bool
 	tcpRetry bool
-	resolver = dnsr.NewResolver()
+	resolver = dnsr.NewResolver(dnsr.WithDebugLogger())
 )
 
 func init() {
@@ -45,7 +45,7 @@ func main() {
 		qtype, args = args[len(args)-1], args[:len(args)-1]
 	}
 	if tcpRetry {
-		resolver = dnsr.NewResolver(dnsr.WithTCPRetry())
+		resolver = dnsr.NewResolver(dnsr.WithTCPRetry(), dnsr.WithDebugLogger())
 	}
 	var wg sync.WaitGroup
 	start := time.Now()
@@ -79,7 +79,6 @@ func query(name, qtype string) {
 	rsp, err := resolver.Resolve(&qmsg)
 
 	color.Printf("\n")
-	color.Printf("@{g}%s\n", rsp.String())
 
 	if err != nil {
 		color.Printf("@{r};; %s\t%s\t%s\n", err, name, qtype)

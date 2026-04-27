@@ -22,6 +22,7 @@ import (
 	"github.com/coredns/coredns/plugin/pkg/cache"
 	"github.com/coredns/coredns/plugin/pkg/dnsutil"
 	"github.com/coredns/coredns/plugin/pkg/response"
+	"github.com/mr-torgue/dnsr/pkg/utils"
 	"github.com/miekg/dns"
 )
 
@@ -37,27 +38,6 @@ type Cache struct {
 	pttl    time.Duration
 
 	rootcache map[uint64]*item
-}
-
-// getters
-func (c *Cache) Expire() bool {
-	return c.expire
-}
-
-func (c *Cache) NCap() int {
-	return c.ncap
-}
-
-func (c *Cache) NTtl() time.Duration {
-	return c.nttl
-}
-
-func (c *Cache) PCap() int {
-	return c.pcap
-}
-
-func (c *Cache) PTtl() time.Duration {
-	return c.pttl
 }
 
 // Default values
@@ -143,7 +123,6 @@ func loadRootfile(rootfile string) map[uint64]*item {
 			root[k] = newItem(msg, now, 0)
 		}
 	}
-	fmt.Printf("root: %+v\n", root)
 	return root
 }
 
@@ -170,17 +149,14 @@ func NewCache(options ...Option) *Cache {
 	}
 	// initialize caches	
 	if c.logger == nil {
-		lgrOpts := &slog.HandlerOptions{
-			Level: slog.LevelDebug,
-		}
-		c.logger = slog.New(slog.NewTextHandler(os.Stderr, lgrOpts))
+		c.logger = utils.InitLogger(false)
 	}
 	c.ncache = cache.New[*item](c.ncap)
 	c.pcache = cache.New[*item](c.pcap)
 	if c.rootcache == nil {
 		c.rootcache = loadRootfile("named.root")
 	}
-	c.logger.Debug("Cache Config:", c)
+	c.logger.Debug(fmt.Sprintf("Cache Config: %+v", c))
 	return c
 }
 
@@ -196,7 +172,7 @@ func (c *Cache) AddWithTime(msg *dns.Msg, now time.Time) {
 	mt, _ := response.Typify(msg, now.UTC())
 	valid, k := key(name(msg), msg, mt, do(msg), msg.CheckingDisabled)
 	if valid {
-		c.logger.Debug("Adding msg ", name(msg), " with key ", k)
+		c.logger.Debug(fmt.Sprintf("Adding msg %s with key %d", name(msg), k))
 		c.add(msg, k, mt)
 	} 
 }
@@ -206,21 +182,15 @@ func (c *Cache) add(msg *dns.Msg, key uint64, mt response.Type) {
 	ttl := dnsutil.MinimalTTL(msg, mt)
 	switch mt {
 	case response.NoError, response.Delegation:
-		c.logger.Debug("min(c.nttl, ttl): ", min(c.pttl, ttl))
-		c.logger.Debug("ttl: ", ttl)
-		c.logger.Debug("pttl: ", c.pttl)
 		i := newItem(msg, time.Now(), min(c.pttl, ttl)) 
 		c.pcache.Add(key, i) 
 	case response.NameError, response.NoData, response.ServerError:
-		c.logger.Debug("min(c.nttl, ttl): ", min(c.nttl, ttl))
-		c.logger.Debug("ttl: ", ttl)
-		c.logger.Debug("nttl: ", c.nttl)
 		i := newItem(msg, time.Now(), min(c.nttl, ttl))
 		c.ncache.Add(key, i) 
 	case response.OtherError:
 		// don't cache these
 	default:
-		c.logger.Debug("Caching called with unknown classification:", mt)
+		c.logger.Debug(fmt.Sprintf("Caching called with unknown classification: %+v", mt))
 	}
 }
 
@@ -235,7 +205,7 @@ func (c *Cache) GetWithTime(msg *dns.Msg, now time.Time) *dns.Msg {
 	qtype := qtype(msg)
 	do := do(msg)
 	key := hash(qname, qtype, do, msg.CheckingDisabled)
-	c.logger.Debug("Getting msg ", qname, " with key ", key)
+	c.logger.Debug(fmt.Sprintf("Getting msg %s with key %d", qname, key))
 	if i, ok := c.ncache.Get(key); ok {
 		ttl := i.ttl(now)
 		if i.matches(qname, qtype) && (ttl > 0 || !c.expire) {

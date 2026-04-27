@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"errors"
 
 	"github.com/miekg/dns"
 )
@@ -15,7 +16,7 @@ type QueryFunc func(ctx context.Context, dst Destination, question dns.Question,
 func ConcurrentLookup(ctx context.Context, dst Destination, questions []dns.Question, flags QueryFlags, queryFunc QueryFunc, logger *slog.Logger) ([]*dns.Msg, error) {
 	var wg sync.WaitGroup
 	responses := make([]*dns.Msg, len(questions))
-	errors := make([]error, len(questions))
+	errs := make([]error, len(questions))
 	done := make(chan struct{})
 
 	for i, q := range questions {
@@ -24,11 +25,11 @@ func ConcurrentLookup(ctx context.Context, dst Destination, questions []dns.Ques
 			defer wg.Done()
 			select {
 			case <-ctx.Done():
-				errors[i] = ctx.Err()
+				errs[i] = ctx.Err()
 			default:
 				resp, err := queryFunc(ctx, dst, q, flags)
 				responses[i] = resp
-				errors[i] = err
+				errs[i] = err
 			}
 		}(i, q)
 	}
@@ -47,19 +48,22 @@ func ConcurrentLookup(ctx context.Context, dst Destination, questions []dns.Ques
 
 	// Collect non-nil responses and handle errors
 	var validResponses []*dns.Msg
+	var err error
 	for i, resp := range responses {
-		if errors[i] != nil {
-			if errors[i] != context.Canceled && errors[i] != context.DeadlineExceeded {
-				logger.Error("error in lookup", "error", errors[i])
+		if errs[i] != nil {
+			err = errors.Join(err, errs[i])
+			if errs[i] != context.Canceled && errs[i] != context.DeadlineExceeded {
+				logger.Error("error in lookup", "error", errs[i])
 			}
 		} else {
 			validResponses = append(validResponses, resp)
 		}
 	}
 
-	if len(validResponses) == 0 && ctx.Err() != nil {
-		return nil, ctx.Err()
+	// NOTE: not sure when this would happen
+	if ctx.Err() != nil {
+		err = errors.Join(err, ctx.Err())
 	}
 
-	return validResponses, nil
+	return validResponses, err
 }

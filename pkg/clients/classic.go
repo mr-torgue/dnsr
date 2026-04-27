@@ -14,7 +14,7 @@ import (
 // ClassicClient represents the config options for setting up a Client.
 type ClassicClient struct {
 	client          *dns.Client
-	config   		ClientConfig
+	config   		*ClientConfig
 	opts 			ClassicClientOpts
 	port 			string
 }
@@ -26,11 +26,11 @@ type ClassicClientOpts struct {
 }
 
 // NewClassicClient accepts a list of nameservers and configures a DNS client.
-func NewClassicClient(config ClientConfig, opts ClassicClientOpts) (Client, error) {
+func NewClassicClient(config *ClientConfig, opts ClassicClientOpts) (Client, error) {
 	net := "udp"
 	port := models.DefaultUDPPort
 	client := &dns.Client{
-		Timeout: config.Timeout,
+		Timeout: config.timeout,
 		Net:     "udp",
 	}
 
@@ -39,13 +39,14 @@ func NewClassicClient(config ClientConfig, opts ClassicClientOpts) (Client, erro
 		port = models.DefaultTCPPort
 	}
 
-	if config.UseIPv4 {
+	if config.useIPv4 {
 		net = net + "4"
-	} else if config.UseIPv6 {
+	} else if config.useIPv6 {
 		net = net + "6"
 	}
 
 	if opts.UseTLS {
+		net = net + "-tls"
 		port = models.DefaultTLSPort
 	}
 
@@ -61,7 +62,7 @@ func NewClassicClient(config ClientConfig, opts ClassicClientOpts) (Client, erro
 
 // Lookup implements the Client interface
 func (c *ClassicClient) Lookup(ctx context.Context, dst Destination, questions []dns.Question, flags QueryFlags) ([]*dns.Msg, error) {
-	return ConcurrentLookup(ctx, dst, questions, flags, c.query, c.config.Logger)
+	return ConcurrentLookup(ctx, dst, questions, flags, c.query, c.config.logger)
 }
 
 // query takes a dns.Question and sends them to DNS Server specified in server.
@@ -69,24 +70,28 @@ func (c *ClassicClient) Lookup(ctx context.Context, dst Destination, questions [
 func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns.Question, flags QueryFlags) (*dns.Msg, error) {
 	var (
 		rsp      *dns.Msg
-		messages = prepareMessages(question, flags, c.config.Ndots, c.config.SearchList)
+		messages = prepareMessages(question, flags, c.config.ndots, c.config.searchList)
 	)
 
-	// set TLS if enabled
+
+	// set a timeout for the query
+	connCtx, cancelConn := context.WithTimeout(ctx, c.config.timeout)
+	defer cancelConn()
+
+	// set TLS if enabled (make sure that it uses client.Net = xxx-tls)
 	if c.opts.UseTLS {
-		c.client.Net = c.client.Net + "-tls"
 		// Provide extra TLS config for doing/skipping hostname verification.
 		c.client.TLSConfig = &tls.Config{
 			ServerName:         dst.TLSHostname,
-			InsecureSkipVerify: c.config.InsecureSkipVerify,
+			InsecureSkipVerify: c.config.insecureSkipVerify,
 		}
 	}
 	
 	addr := net.JoinHostPort(dst.Server, c.port)
 	for _, msg := range messages {
-		c.config.Logger.Debug("Attempting to resolve",
+		c.config.logger.Debug("Attempting to resolve",
 			"domain", msg.Question[0].Name,
-			"ndots", c.config.Ndots,
+			"ndots", c.config.ndots,
 			"nameserver", addr,
 			"flags", flags,
 			"RD", msg.MsgHdr.RecursionDesired,
@@ -97,7 +102,7 @@ func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns
 		// it's better to not rely on `rtt` provided here and calculate it ourselves.
 		//now := time.Now()
 
-		in, _, err := c.client.ExchangeContext(ctx, &msg, addr)
+		in, _, err := c.client.ExchangeContext(connCtx, &msg, addr)
 		if err != nil {
 			if err == context.Canceled || err == context.DeadlineExceeded {
 				return rsp, err
@@ -108,10 +113,11 @@ func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns
 		// In case the response size exceeds 512 bytes (can happen with lot of TXT records),
 		// fallback to TCP as with UDP the response is truncated. Fallback mechanism is in-line with `dig`.
 		if in.Truncated {
-			if !c.config.UseTCPFallback {
-				c.config.Logger.Debug("Truncated msg and TCP retransmission disabled!")
+			if !c.config.useTCPFallback {
+				c.config.logger.Debug("Truncated msg and TCP retransmission disabled!")
 				return rsp, fmt.Errorf("truncated response and TCP retransmission disabled")
 			}
+			oldNet := c.client.Net
 			switch c.client.Net {
 			case "udp":
 				c.client.Net = "tcp"
@@ -122,8 +128,16 @@ func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns
 			default:
 				c.client.Net = "tcp"
 			}
-			c.config.Logger.Debug("Response truncated; retrying now", "protocol", c.client.Net)
-			return c.query(ctx, dst, question, flags)
+			c.config.logger.Debug("Response truncated; retrying now", "protocol", c.client.Net)
+			in, _, err = c.client.ExchangeContext(connCtx, &msg, addr)
+			c.client.Net = oldNet // reset
+			if err != nil {
+				if err == context.Canceled || err == context.DeadlineExceeded {
+					return rsp, err
+				}
+				return rsp, err
+			}
+			//return c.query(connCtx, dst, question, flags)
 		}
 
 		rsp = in
@@ -134,13 +148,11 @@ func (c *ClassicClient) query(ctx context.Context, dst Destination, question dns
 
 		// Check if context is done after each iteration
 		select {
-		case <-ctx.Done():
-			return rsp, ctx.Err()
+		case <-connCtx.Done():
+			return rsp, connCtx.Err()
 		default:
 			// Continue to next iteration
 		}
 	}
-	c.config.Logger.Debug("Return here")
-	c.config.Logger.Debug("rsp", rsp.String(),)
 	return rsp, nil
 }
