@@ -249,11 +249,12 @@ func (r *Resolver) iterateParents(ctx context.Context, qmsg *dns.Msg, depth int)
 		if err != nil {
 			continue
 		}
-		if err == nil && nsRmsg == nil {
-			r.logger.Debug(fmt.Sprintf("[query %s NS] should not happen", pname))
-		}
 
-		r.logger.Debug(fmt.Sprintf("[query %s NS] found %d nameservers", pname, len(nsRmsg.Answer)))
+		// NS could be in answer or authoritative
+		answers := append(append(nsRmsg.Answer, nsRmsg.Ns...), nsRmsg.Extra...)
+		nrAnswers := len(answers)
+		r.logger.Debug(fmt.Sprintf("[query %s NS] found %d nameservers", pname, nrAnswers))
+		fmt.Printf("message: %s\n", nsRmsg.String())
 
 		// Check cache for specific queries (it retrieves intermediate queries)
 		if nsRmsg != nil {
@@ -264,12 +265,17 @@ func (r *Resolver) iterateParents(ctx context.Context, qmsg *dns.Msg, depth int)
 			}
 		}
 
+		// no results, keep going
+		if nrAnswers == 0 {
+			continue
+		}
+
 		// Query all nameservers in parallel
 		count := 0
 		
 		// RR format: https://github.com/miekg/dns/blob/d1539a788a12830620381c4cc6617762994f3fa1/dns.go#L31
-		for i := 0; i < len(nsRmsg.Answer) && count < MaxNameservers; i++ {
-			nrr := nsRmsg.Answer[i]
+		for i := 0; i < nrAnswers && count < MaxNameservers; i++ {
+			nrr := answers[i]
 			if nrr.Header().Rrtype != dns.TypeNS {
 				continue
 			}
@@ -296,7 +302,7 @@ func (r *Resolver) iterateParents(ctx context.Context, qmsg *dns.Msg, depth int)
 			case rsp := <-chanMsgs:
 				ctx := context.WithoutCancel(ctx)
 				cancel() // stop any other work here before recursing
-				rsp.Ns = nsRmsg.Answer // set NS results in the Auth section
+				rsp.Ns = answers // set NS results in the Auth section
 				return r.resolveCNAMEs(ctx, qmsg, rsp, depth)
 			case err = <-chanErrs:
 				if err == NXDOMAIN {
@@ -468,9 +474,10 @@ func (r *Resolver) resolveCNAMEs(ctx context.Context, qmsg *dns.Msg, rmsg *dns.M
 		cnameQmsg := utils.CreateQuestion(utils.GetValue(rr), "CNAME")
 		cnameRmsg, _ := r.resolve(ctx, cnameQmsg, depth)
 		// add to answer section
-		for _, cnameRr := range cnameRmsg.Answer {
-			rmsg.Answer = append(rmsg.Answer, cnameRr)
-		}
+		//for _, cnameRr := range cnameRmsg.Answer {
+			//rmsg.Answer = append(rmsg.Answer, cnameRr)
+		//}
+		rmsg.Answer = append(rmsg.Answer, cnameRmsg.Answer...)
 	}
 	return rmsg, nil
 }
