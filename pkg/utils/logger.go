@@ -5,6 +5,7 @@ import (
 	"os"
 )
 
+
 // InitLogger initializes logger.
 func InitLogger(debug bool) *slog.Logger {
 	lvl := slog.LevelInfo
@@ -19,3 +20,4 @@ func InitLogger(debug bool) *slog.Logger {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, lgrOpts))
 	return logger
 }
+

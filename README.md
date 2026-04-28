@@ -15,6 +15,7 @@ In anticipation of creating a resolver plugin for CoreDNS, we make a few changes
 - [ ] Add support for UDP fragmentation
 - [ ] Add support for DNSSEC validation
 - [ ] Support for IPV6
+- [ ] Add support for other classes?
 
 Issues:
 - [ ] PTR not working

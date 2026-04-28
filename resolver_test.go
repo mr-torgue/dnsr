@@ -10,46 +10,69 @@ import (
 func TestNewResolver(t *testing.T) {
     tests := []struct {// Define a struct for each test case and create a slice of them
 		name string
-        expire bool
-        ncap int
-        nttl time.Duration
-        pcap int
-        pttl time.Duration
+		timeout string
+		expectedTimeout time.Duration
+		capacity int 
+		expire bool
+		clientType string
+		clientTimeout string
+		expectedClientTimeout time.Duration
+		tcpRetry bool
+		classicRetry bool   
+		dnssec bool   
+		strategy string 
+		expectedStrategy string 
     }{
-        {"Test Normal", true, 123, 1, 321, 2},
-        {"Test Default Values", false, 0, 0, 0, 0},
-        {"Test Large Values", true, 123456, 9999999, 88880, 88833334},
+        {"Test Normal Configuration", "10s", 10 * time.Second, 10000, false, "tcp", "12s", 12 * time.Second, false, false, false, "", "parallel"},
+        {"Test Complex Timeouts", "10m10s", 10 * time.Minute + 10 * time.Second, 10000, false, "tcp", "1h8s", time.Hour + 8 * time.Second, false, false, false, "", "parallel"},
+        {"Test Wrong Timeout Formats", "10mx10s", Timeout, 10000, false, "tcp", "1h8s", time.Hour + 8 * time.Second, false, false, false, "", "parallel"},
+        {"Test Booleans", "10mx10s", Timeout, 10000, true, "tcp", "1h8s", time.Hour + 8 * time.Second, true, true, true, "", "parallel"},
     }
+	rslvr := NewResolver()
+	assert.NotNil(t, rslvr.logger, "Logger should not be nil")
+	assert.Equal(t, Timeout, rslvr.timeout, "Timeout should match")
+	assert.Equal(t, DefaultCapacity, rslvr.capacity, "Capacity should match")
+	assert.Equal(t, DefaultExpire, rslvr.expire, "Expire should match")
+	assert.Equal(t, DefaultClientType, rslvr.clientType, "ClientType should match")
+	assert.Equal(t, ClientTimeout, rslvr.clientTimeout, "ClientTimeout should match")
+	assert.Equal(t, DefaultTCPRetry, rslvr.tcpRetry, "TcpRetry should match")
+	assert.Equal(t, DefaultClassicRetry, rslvr.classicRetry, "ClassicRetry should match")
+	assert.Equal(t, DefaultDNSSEC, rslvr.dnssec, "Dnssec should match")
+	assert.Equal(t, DefaultStrategy, rslvr.strategy, "Strategy should match")
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-			options := []Option{}
-			if tt.expire {
-				options = append(options, WithExpire())
-			}
-			if tt.ncap > 0 {
-				options = append(options, WithNcap(tt.ncap))
-			} else {
-				tt.ncap = DefaultNcap
-			}
-			if tt.nttl > 0 {
-				options = append(options, WithNttl(tt.nttl))
-			} else {
-				tt.nttl = DefaultNttl
-			}
-			if tt.pcap > 0 {
-				options = append(options, WithPcap(tt.pcap))
-			} else {
-				tt.pcap = DefaultPcap
-			}
-			if tt.pttl > 0 {
-				options = append(options, WithPttl(tt.pttl))
-			} else {
-				tt.pttl = DefaultPttl
-			}
-			c := NewCache(options...)
-			rslvr := NewResolver()
-			assert.Equal(t, rslvr.clientType, "udp", "Types should match")
+			rslvr = NewResolver(
+				WithTimeout(tt.timeout),
+				WithCapacity(tt.capacity),
+				WithExpire(tt.expire),
+				WithClientType(tt.clientType),
+				WithClientTimeout(tt.clientTimeout),
+				WithTCPRetry(tt.tcpRetry),
+				WithClassicRetry(tt.classicRetry),
+				WithDNSSEC(tt.dnssec),
+				WithStrategy(tt.strategy),
+			)
+			// test resolver
+			assert.NotNil(t, rslvr.logger, "Logger should not be nil")
+  			assert.Equal(t, tt.expectedTimeout, rslvr.timeout, "Timeout should match")
+  			assert.Equal(t, tt.capacity, rslvr.capacity, "Capacity should match")
+  			assert.Equal(t, tt.expire, rslvr.expire, "Expire should match")
+  			assert.Equal(t, tt.clientType, rslvr.clientType, "ClientType should match")
+  			assert.Equal(t, tt.expectedClientTimeout, rslvr.clientTimeout, "ClientTimeout should match")
+  			assert.Equal(t, tt.tcpRetry, rslvr.tcpRetry, "TcpRetry should match")
+  			assert.Equal(t, tt.classicRetry, rslvr.classicRetry, "ClassicRetry should match")
+  			assert.Equal(t, tt.dnssec, rslvr.dnssec, "Dnssec should match")
+  			assert.Equal(t, tt.expectedStrategy, rslvr.strategy, "Strategy should match")
+
+			// test cache
+
+			// test client
+  			//assert.Equal(t, tt.clientType, rslvr.client.clientType, "ClientType should match")
+  			//assert.Equal(t, tt.expectedClientTimeout, rslvr.client.timeout, "Timeout should match")
+  			//assert.Equal(t, tt.tcpRetry, rslvr.client.useTCPFallback, "TcpRetry should match")
+  			//assert.Equal(t, tt.classicRetry, rslvr.client.useUDPFallback, "ClassicRetry should match")
+
         })
     }
 }
