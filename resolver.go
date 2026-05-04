@@ -28,7 +28,10 @@ var (
 	DefaultTCPRetry     = true
 	DefaultClassicRetry = true
 	DefaultDNSSEC	    = false
+	DefaultEDNS		 	= false
+	DefaultUDPSize      = uint16(1232)
 	DefaultStrategy     = "parallel"
+	DefaultRootfile     = "named.root"
 )
 
 // Resolver errors.
@@ -40,6 +43,9 @@ var (
 	ErrNoARecords   = fmt.Errorf("no A records found for name server")
 	ErrNoResponse   = fmt.Errorf("no responses received")
 	ErrTimeout      = fmt.Errorf("timeout expired") // TODO: Timeouter interface? e.g. func (e) Timeout() bool { return true }
+	ErrNoCache 		= fmt.Errorf("could not initialize cache")
+	ErrNoRootcache	= fmt.Errorf("could not initialize rootcache")
+	ErrNoClient		= fmt.Errorf("could not initialize client")
 )
 
 // A ContextDialer implements the DialContext method, e.g. net.Dialer.
@@ -83,6 +89,14 @@ func WithCapacity(capacity int) Option {
 		r.capacity = capacity
 	}
 }
+
+// WithRootfile specifies a cache with capacity cap.
+func WithRootfile(filename string) Option {
+	return func(r *Resolver) {
+		r.rootcache = cache.LoadRootfile(filename)
+	}
+}
+
 
 // WithExpire specifies that the Resolver will delete stale cache entries.
 func WithExpire(expire bool) Option {
@@ -133,6 +147,20 @@ func WithDNSSEC(dnssec bool) Option {
 	}
 }
 
+// WithEDNS specifies that EDNS is enabledd.
+func WithEDNS(edns bool) Option {
+	return func(r *Resolver) {
+		r.edns = edns
+	}
+}
+
+// WithUDPSize specifies the EDNS UDP size.
+func WithUDPSize(udpsize uint16) Option {
+	return func(r *Resolver) {
+		r.udpsize = udpsize
+	}
+}
+
 // WithStrategy specifies the NS strategy, which is either parallel or sequential.
 func WithStrategy(strategy string) Option {
 	return func(r *Resolver) {
@@ -151,6 +179,7 @@ type Resolver struct {
 	cache         *cache.Cache
 	capacity      int
 	expire        bool
+	rootcache     *cache.Cache
 	// client settings
 	client        clients.Client // supported: udp, tcp, doh, doq, tls, and dnscrypt
 	clientType    string
@@ -158,6 +187,8 @@ type Resolver struct {
 	tcpRetry      bool   // indicates if queries should be retried when the client fails
 	classicRetry  bool   
 	dnssec        bool   // turn on/off dnssec validation
+	edns 		  bool
+	udpsize       uint16
 	strategy      string // supported: sequential and parallel
 } 
 
@@ -175,6 +206,8 @@ func NewResolver(options ...Option) *Resolver {
 		tcpRetry: DefaultTCPRetry, 
 		classicRetry: DefaultClassicRetry,
 		dnssec: DefaultDNSSEC, 
+		edns: DefaultEDNS,
+		udpsize: DefaultUDPSize,
 		strategy: DefaultStrategy, 
 	}
 	// parse options
@@ -190,8 +223,7 @@ func NewResolver(options ...Option) *Resolver {
 		r.expire,
 	)
 	if r.cache == nil {
-		r.logger.Debug("Could not initialize resolver cache!")
-		return nil
+		panic(ErrNoCache)
 	}
 	clientConfig := clients.NewClientConfig(
 		clients.WithLogger(r.logger),
@@ -204,6 +236,16 @@ func NewResolver(options ...Option) *Resolver {
 		r.logger.Debug(fmt.Sprintf("Could not initialize resolver client: %s. Switching to a UDP client.", r.clientType))
 		clientConfig = clients.NewClientConfig()
 		r.client, err = clients.LoadClient(clientConfig)
+		if err != nil {
+			panic(ErrNoClient)
+		}
+	}
+	if r.rootcache == nil {
+		r.rootcache = cache.LoadRootfile("named.root")
+		if r.rootcache == nil {
+			panic(ErrNoRootcache)
+		}
+
 	}
 	r.logger.Debug(fmt.Sprintf("Resolver Config: %+v", r))
 	return r
@@ -426,8 +468,6 @@ func (r *Resolver) iterateParents(ctx context.Context, qname, qtype string, dept
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			case rrs := <-chanRRs:
-				r.logger.Debug(fmt.Sprintf("Received rrs %s", rrs))
-				r.logger.Debug(fmt.Sprintf("Received nrrs %s", nrrs))
 				// NOTE: should we keep this disabled? I don't see any good reason to include a NS for
 				// an answer in a recursive resolver.
 				/*
@@ -501,6 +541,9 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 	}
 	var qmsg dns.Msg
 	qmsg.SetQuestion(qname, dtype)
+	if r.edns {
+		qmsg.SetEdns0(r.udpsize, r.dnssec)
+	}
 	qmsg.MsgHdr.RecursionDesired = false
 
 	// Synchronously query this DNS server
@@ -610,7 +653,6 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 
 func (r *Resolver) resolveCNAMEs(ctx context.Context, qname, qtype string, crrs cache.RRs, depth int) (cache.RRs, error) {
 	var rrs cache.RRs
-	r.logger.Debug(fmt.Sprintf("CNAME rrs %s", crrs))
 	for _, crr := range crrs {
 		rrs = append(rrs, crr)
 		if crr.Type != "CNAME" || crr.Name != qname {
@@ -657,7 +699,7 @@ func (r *Resolver) cacheGet(ctx context.Context, qname, qtype string) (cache.RRs
 	}
 	any := r.cache.Get(qname)
 	if any == nil {
-		any = rootCache.Get(qname)
+		any = r.rootcache.Get(qname)
 	}
 	if any == nil {
 		return nil, nil

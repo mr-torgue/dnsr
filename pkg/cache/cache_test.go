@@ -27,6 +27,16 @@ func TestLiveCacheEntry(t *testing.T) {
 	st.Expect(t, len(rrs), 1)
 }
 
+func TestContainsCacheEntry(t *testing.T) {
+	c := NewCache(100, true)
+	c.AddNX("alive.")
+	alive := time.Now().Add(time.Minute)
+	rr := RR{Name: "alive.", Type: "A", Value: "1.2.3.4", Expiry: alive}
+	c.Add("alive.", rr)
+	success := c.Contains("alive.")
+	st.Expect(t, success, true)
+}
+
 func TestExpiredCacheEntry(t *testing.T) {
 	c := NewCache(100, true)
 	c.AddNX("expired.")

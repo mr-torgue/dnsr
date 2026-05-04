@@ -116,7 +116,16 @@ func (c *Cache) _evict() {
 	}
 }
 
-// get returns a randomly ordered slice of DNS records.
+// Contains returns true if qname exists
+// NOTE: an empty slice means NXDOMAIN
+func (c *Cache) Contains(qname string) bool {
+	c.m.RLock()
+	defer c.m.RUnlock()
+	_, ok := c.entries[qname]
+	return ok
+}
+
+// Get returns a randomly ordered slice of DNS records.
 func (c *Cache) Get(qname string) RRs {
 	c.m.RLock()
 	defer c.m.RUnlock()
