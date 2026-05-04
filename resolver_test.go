@@ -3,9 +3,48 @@ package dnsr
 import (
 	"testing"
 	"time"
+	"fmt"
+	"strings"
 
+	"github.com/miekg/dns"
   	"github.com/stretchr/testify/assert"
+  	"github.com/stretchr/testify/require"
 )
+
+type ExpectedRR struct {
+	qtype uint16
+	value string
+}
+
+type TestCase struct {
+	name     string
+	qname    string
+	qtype    uint16
+	rcode    int
+	expectedNrAnswers int
+	expectedAnswers []ExpectedRR
+	expectedNrAuth int
+	expectedAuth []ExpectedRR
+	expectedNrExtra int
+	expectedExtra []ExpectedRR
+}
+
+type TestCaseConfig struct {
+	name string
+	timeout string
+	expectedTimeout time.Duration
+	capacity int 
+	expire bool
+	clientType string
+	clientTimeout string
+	expectedClientTimeout time.Duration
+	tcpRetry bool
+	classicRetry bool   
+	dnssec bool   
+	strategy string 
+	expectedStrategy string 
+	testCases []TestCase
+}	
 
 func TestNewResolver(t *testing.T) {
     tests := []struct {// Define a struct for each test case and create a slice of them
@@ -15,6 +54,7 @@ func TestNewResolver(t *testing.T) {
 		capacity int 
 		expire bool
 		clientType string
+        wantType string
 		clientTimeout string
 		expectedClientTimeout time.Duration
 		tcpRetry bool
@@ -23,13 +63,19 @@ func TestNewResolver(t *testing.T) {
 		strategy string 
 		expectedStrategy string 
     }{
-        {"Test Normal Configuration", "10s", 10 * time.Second, 10000, false, "tcp", "12s", 12 * time.Second, false, false, false, "", "parallel"},
-        {"Test Complex Timeouts", "10m10s", 10 * time.Minute + 10 * time.Second, 10000, false, "tcp", "1h8s", time.Hour + 8 * time.Second, false, false, false, "", "parallel"},
-        {"Test Wrong Timeout Formats", "10mx10s", Timeout, 10000, false, "tcp", "1h8s", time.Hour + 8 * time.Second, false, false, false, "", "parallel"},
-        {"Test Booleans", "10mx10s", Timeout, 10000, true, "tcp", "1h8s", time.Hour + 8 * time.Second, true, true, true, "", "parallel"},
+        {"Test Normal Configuration", "10s", 10 * time.Second, 10000, false, "tcp", "*clients.ClassicClient", "12s", 12 * time.Second, false, false, false, "", "parallel"},
+        {"Test Complex Timeouts", "10m10s", 10 * time.Minute + 10 * time.Second, 10000, false, "tcp", "*clients.ClassicClient", "1h8s", time.Hour + 8 * time.Second, false, false, false, "", "parallel"},
+        {"Test Wrong Timeout Formats", "10mx10s", Timeout, 10000, false, "tcp", "*clients.ClassicClient", "1h8s", time.Hour + 8 * time.Second, false, false, false, "", "parallel"},
+        {"Test Booleans", "10mx10s", Timeout, 10000, true, "tcp", "*clients.ClassicClient", "1h8s", time.Hour + 8 * time.Second, true, true, true, "", "parallel"},
+        {"Test Different Client UDP", "10mx10s", Timeout, 10000, true, "udp", "*clients.ClassicClient", "1h8s", time.Hour + 8 * time.Second, true, true, true, "", "parallel"},
+        {"Test Different Client QUIC", "10mx10s", Timeout, 10000, true, "doq", "*clients.DOQClient", "1h8s", time.Hour + 8 * time.Second, true, true, true, "", "parallel"},
+        {"Test Different Client Non-Existing, defaults to UDP", "10mx10s", Timeout, 10000, true, "doqt", "*clients.ClassicClient", "1h8s", time.Hour + 8 * time.Second, true, true, true, "", "parallel"},
     }
 	rslvr := NewResolver()
+	gotType := fmt.Sprintf("%T", rslvr.client)
 	assert.NotNil(t, rslvr.logger, "Logger should not be nil")
+	assert.NotNil(t, rslvr.cache, "Cache should not be nil")
+	assert.NotNil(t, rslvr.client, "Client should not be nil")
 	assert.Equal(t, Timeout, rslvr.timeout, "Timeout should match")
 	assert.Equal(t, DefaultCapacity, rslvr.capacity, "Capacity should match")
 	assert.Equal(t, DefaultExpire, rslvr.expire, "Expire should match")
@@ -39,6 +85,7 @@ func TestNewResolver(t *testing.T) {
 	assert.Equal(t, DefaultClassicRetry, rslvr.classicRetry, "ClassicRetry should match")
 	assert.Equal(t, DefaultDNSSEC, rslvr.dnssec, "Dnssec should match")
 	assert.Equal(t, DefaultStrategy, rslvr.strategy, "Strategy should match")
+	assert.Equal(t, "*clients.ClassicClient", gotType, "Types should match")
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
@@ -53,8 +100,11 @@ func TestNewResolver(t *testing.T) {
 				WithDNSSEC(tt.dnssec),
 				WithStrategy(tt.strategy),
 			)
+			gotType = fmt.Sprintf("%T", rslvr.client)
 			// test resolver
 			assert.NotNil(t, rslvr.logger, "Logger should not be nil")
+			assert.NotNil(t, rslvr.cache, "Cache should not be nil")
+			assert.NotNil(t, rslvr.client, "Client should not be nil")
   			assert.Equal(t, tt.expectedTimeout, rslvr.timeout, "Timeout should match")
   			assert.Equal(t, tt.capacity, rslvr.capacity, "Capacity should match")
   			assert.Equal(t, tt.expire, rslvr.expire, "Expire should match")
@@ -64,19 +114,130 @@ func TestNewResolver(t *testing.T) {
   			assert.Equal(t, tt.classicRetry, rslvr.classicRetry, "ClassicRetry should match")
   			assert.Equal(t, tt.dnssec, rslvr.dnssec, "Dnssec should match")
   			assert.Equal(t, tt.expectedStrategy, rslvr.strategy, "Strategy should match")
-
-			// test cache
-
-			// test client
-  			//assert.Equal(t, tt.clientType, rslvr.client.clientType, "ClientType should match")
-  			//assert.Equal(t, tt.expectedClientTimeout, rslvr.client.timeout, "Timeout should match")
-  			//assert.Equal(t, tt.tcpRetry, rslvr.client.useTCPFallback, "TcpRetry should match")
-  			//assert.Equal(t, tt.classicRetry, rslvr.client.useUDPFallback, "ClassicRetry should match")
-
+			assert.Equal(t, tt.wantType, gotType, "Types should match")
+			// TODO: test client and cache in more detail
         })
     }
 }
 
+// match returns true if rr is in the expectedRRs slice
+func match(rr dns.RR, expectedRRs []ExpectedRR) (bool, int) {
+	for i, expectedRR := range expectedRRs {
+		if expectedRR.qtype == rr.Header().Rrtype && strings.Contains(rr.String(), expectedRR.value) {
+			return true, i
+		}
+	}
+	return false, 0
+}
+
+// matchall returns true iff rrs and expectedRRs are the same
+func matchall(rrs []dns.RR, expectedRRs []ExpectedRR) bool {
+    matchedIndices := make(map[int]bool)
+    for _, rr := range rrs {
+        matched, index := match(rr, expectedRRs)
+        if matched {
+            if matchedIndices[index] {
+                return false
+            }
+            matchedIndices[index] = true
+        }
+    }
+    return len(matchedIndices) == len(expectedRRs)
+}
+
+func TestResolveMsg(t *testing.T) {
+
+	tests := []TestCaseConfig {
+		{
+			name: "UDP resolver",
+			timeout: "15s",
+			expectedTimeout: 15 * time.Second,
+			capacity: 1000,
+			expire: true,
+			clientType: "udp",
+			clientTimeout: "2s",
+			expectedClientTimeout: 2 * time.Second,
+			tcpRetry: true,
+			classicRetry: true,   
+			dnssec: false,
+			strategy: "default",
+			expectedStrategy: "",			
+			testCases: []TestCase {
+				{
+					name: "[UDP] Client should return A record of folmer.info", 
+					qname: "folmer.info", 
+					qtype: dns.TypeA,
+					rcode: dns.RcodeSuccess,
+					expectedNrAnswers: 1,
+					expectedAnswers: []ExpectedRR {
+						{dns.TypeA, "65.109.0.142",},
+					},
+					expectedNrAuth: 0,
+					expectedAuth: []ExpectedRR {},
+					//expectedNrExtra: 1,
+					//expectedExtra: []ExpectedRR {
+					//	{dns.TypeOPT, "",},
+					//},
+
+				},
+				{
+					name: "[UDP] Client should return A record and CNAME record of www.github.com", 
+					qname: "www.github.com", 
+					qtype: dns.TypeA,
+					rcode: dns.RcodeSuccess,
+					expectedNrAnswers: 2,
+					expectedAnswers: []ExpectedRR {
+						{dns.TypeA, "4.237.22.38",},
+						{dns.TypeCNAME, "github.com.",},
+					},
+					expectedNrAuth: 0,
+					expectedAuth: []ExpectedRR {},
+					//expectedNrExtra: 1,
+					//expectedExtra: []ExpectedRR {
+					//	{dns.TypeOPT, "",},
+					//},
+
+				},
+				//{"[UDP] Request with CNAME", "www.github.com", "A", },
+				// test truncated
+				// Test 1.com"
+			},
+		},
+	}
+
+	// loop over client configurations
+    for _, ttconfig := range tests {
+		rslvr := NewResolver(
+			WithDebugLogger(),
+			WithTimeout(ttconfig.timeout),
+			WithCapacity(ttconfig.capacity),
+			WithExpire(ttconfig.expire),
+			WithClientType(ttconfig.clientType),
+			WithClientTimeout(ttconfig.clientTimeout),
+			WithTCPRetry(ttconfig.tcpRetry),
+			WithClassicRetry(ttconfig.classicRetry),
+			WithDNSSEC(ttconfig.dnssec),
+			WithStrategy(ttconfig.strategy),
+		)
+		var (
+			qmsg dns.Msg
+		)
+
+		for _, tt := range ttconfig.testCases {
+			t.Run(tt.name, func(t *testing.T) {
+				qmsg.SetQuestion(tt.qname, tt.qtype)
+				rmsg := rslvr.ResolveMsg(&qmsg)
+				fmt.Printf("rmsg: %s\n", rmsg.String())
+				require.NotNil(t, rmsg, "response should not be nil") // it should always return something if qmsg != nil
+				assert.Equal(t, tt.rcode, rmsg.Rcode, "rcodes should match")
+				assert.Equal(t, tt.expectedNrAnswers, len(rmsg.Answer), "expected a different number of results")
+				assert.True(t, matchall(rmsg.Answer, tt.expectedAnswers), "matchall for answers failed")
+				assert.True(t, matchall(rmsg.Ns, tt.expectedAuth), "matchall for authoritative failed")
+				assert.True(t, matchall(rmsg.Extra, tt.expectedExtra), "matchall for additional failed")
+			})
+		}
+    }
+}
 /*
 func TestMain(m *testing.M) {
 	flag.Parse()
@@ -463,5 +624,4 @@ func TestOOBOtherDomains(t *testing.T) {
 			t.Errorf("%s: no records returned", domain)
 		}
 	}
-}
-*/
+}*/

@@ -201,8 +201,9 @@ func NewResolver(options ...Option) *Resolver {
 	var err error
 	r.client, err = clients.LoadClient(clientConfig)
 	if err != nil {
-		r.logger.Debug(fmt.Sprintf("Could not initialize resolver client: %s. Error: %s.", r.clientType, err))
-		return nil		
+		r.logger.Debug(fmt.Sprintf("Could not initialize resolver client: %s. Switching to a UDP client.", r.clientType))
+		clientConfig = clients.NewClientConfig()
+		r.client, err = clients.LoadClient(clientConfig)
 	}
 	r.logger.Debug(fmt.Sprintf("Resolver Config: %+v", r))
 	return r
@@ -263,26 +264,50 @@ func (r *Resolver) ResolveMsg(qmsg *dns.Msg) *dns.Msg {
 		qtypeNr := utils.GetType(qmsg)
 		qtype := dns.TypeToString[qtypeNr]
 		rrs, err := r.ResolveErr(qname, qtype)
-		fmt.Printf("%s\n", rrs)
 
+		r.logger.Debug(fmt.Sprintf("found %s", rrs))
 		// prepare the answer
 		var rmsg = new(dns.Msg)
 		rmsg.SetReply(qmsg)
 		// check if we received an answer
 		if err == nil && len(rrs) > 0 {	
 			// copy answer to Answer section
+			cnameMap := make(map[string]cache.RR) // for verifying the CNAME chain
+			answerName := ""
 			for _, rr := range rrs {
-				fmt.Printf("Name: %s, Type: %s\n", rr.Name, rr.Type)
-				fmt.Printf("qname: %s, qtype: %s\n", utils.ToLowerFQDN(qname), qtype)
-				// check if it is really an answer
-				if rr.Name == utils.ToLowerFQDN(qname) && rr.Type == qtype {
+				// check if the type matches (or CNAME)
+				if rr.Type == qtype || rr.Type == "CNAME" {
 					newrr := cache.ConvertDNSRR(rr)
-					fmt.Printf("newrr: %s\n", newrr)
+					r.logger.Debug(fmt.Sprintf("Converting %s %s into %s", rr.Name, rr.Type, newrr.String()))
 					if newrr != nil {
 						rmsg.Answer = append(rmsg.Answer, newrr)
 					}
+					if rr.Type == "CNAME" {
+						cnameMap[rr.Name] = rr
+					} else {
+						// we cannot have answers for 
+						if answerName != "" && answerName != rr.Name {
+							r.logger.Info(fmt.Sprintf("Found answers for differente qnames, got %s and %s", answerName, rr.Name))
+							rmsg.Answer = nil
+							rmsg.Rcode = dns.RcodeServerFailure 
+							break
+						}
+						answerName = rr.Name
+					}
 				}
 			}
+			// if CNAME is found we have to verify the chain.
+			// Would be easier if we can assume the responses are ordered, but lets not do that.
+			name := utils.ToLowerFQDN(qname)
+			for _, ok := cnameMap[name]; ok; _, ok = cnameMap[name] {
+				name = cnameMap[name].Value
+			}
+			if name != answerName {
+				r.logger.Info(fmt.Sprintf("CNAME chain invalid, expected %s but got %s", answerName, name))
+				rmsg.Answer = nil
+				rmsg.Rcode = dns.RcodeServerFailure 
+			}
+
 		} else if err == NXDOMAIN { 
 			rmsg.Rcode = dns.RcodeNameError 
 		} else {
@@ -342,6 +367,7 @@ func (r *Resolver) iterateParents(ctx context.Context, qname, qtype string, dept
 	defer cancel()
 	for pname, ok := qname, true; ok; pname, ok = utils.GetParent(pname) {
 		// If we’re looking for [foo.com,NS], then move on to the parent ([com,NS])
+		
 		if pname == qname && qtype == "NS" {
 			continue
 		}
@@ -400,11 +426,17 @@ func (r *Resolver) iterateParents(ctx context.Context, qname, qtype string, dept
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			case rrs := <-chanRRs:
+				r.logger.Debug(fmt.Sprintf("Received rrs %s", rrs))
+				r.logger.Debug(fmt.Sprintf("Received nrrs %s", nrrs))
+				// NOTE: should we keep this disabled? I don't see any good reason to include a NS for
+				// an answer in a recursive resolver.
+				/*
 				for _, nrr := range nrrs {
-					if nrr.Name == qname {
+					if nrr.Name == qname && nrr.Type == "NS" {
 						rrs = append(rrs, nrr)
 					}
 				}
+				*/
 				ctx := context.WithoutCancel(ctx)
 				cancel() // stop any other work here before recursing
 				return r.resolveCNAMEs(ctx, qname, qtype, rrs, depth)
@@ -504,6 +536,7 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 	}
 	// only consider first message
 	rmsg := rmsgs[0]
+	r.logger.Debug(fmt.Sprintf("Received message from client: %s", rmsg.String()))
 
 	// FIXME: cache NXDOMAIN responses responsibly
 	if rmsg.Rcode == dns.RcodeNameError {
@@ -577,6 +610,7 @@ func (r *Resolver) exchangeIP(ctx context.Context, host, ip, qname, qtype string
 
 func (r *Resolver) resolveCNAMEs(ctx context.Context, qname, qtype string, crrs cache.RRs, depth int) (cache.RRs, error) {
 	var rrs cache.RRs
+	r.logger.Debug(fmt.Sprintf("CNAME rrs %s", crrs))
 	for _, crr := range crrs {
 		rrs = append(rrs, crr)
 		if crr.Type != "CNAME" || crr.Name != qname {
