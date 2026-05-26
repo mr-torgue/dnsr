@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mr-torgue/dnsr/pkg/utils"
 	"github.com/miekg/dns"
+	"github.com/mr-torgue/dnsr/pkg/utils"
 )
 
 // RR represents a DNS resource record.

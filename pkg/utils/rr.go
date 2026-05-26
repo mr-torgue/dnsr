@@ -29,4 +29,4 @@ func GetValue(rr dns.RR) string {
 		}
 	}
 	return ""
-}	
+}

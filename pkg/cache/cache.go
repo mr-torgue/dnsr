@@ -3,16 +3,38 @@ package cache
 import (
 	"sync"
 	"time"
+
+	"github.com/miekg/dns"
+)
+
+// ValidationStatus indicates the DNSSEC status of an RRSET
+type ValidationStatus int
+
+const (
+	StatusIndeterminate ValidationStatus = iota // Not yet validated
+	StatusSecure                                // Chain of trust verified
+	StatusInsecure                              // Proved to be unsigned
+	StatusBogus                                 // Validation failed
 )
 
 type Cache struct {
 	capacity int
 	expire   bool
 	m        sync.RWMutex
-	entries  map[string]entry
+	entries  map[string]*CacheEntry
 }
 
 type entry map[RR]struct{}
+
+type CacheEntry struct {
+	Records    []dns.RR // The actual data (A, AAAA, etc.)
+	Signatures []dns.RR // The RRSIG records for this RRSet
+	Status     ValidationStatus
+
+	// The point in time this entry must be evicted.
+	// This is min(Record TTL, RRSIG Validity Period)
+	ExpiresAt time.Time
+}
 
 const MinCacheCapacity = 1000
 

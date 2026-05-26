@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mr-torgue/dnsr"
 	"github.com/miekg/dns"
+	"github.com/mr-torgue/dnsr"
 	"github.com/wsxiaoys/terminal/color"
 	"golang.org/x/net/idna"
 )
@@ -15,7 +15,7 @@ import (
 var (
 	verbose  bool
 	tcpRetry bool
-	resolver = dnsr.NewResolver()
+	resolver = dnsr.NewResolver(dnsr.WithDNSSEC(true))
 )
 
 func init() {
@@ -75,20 +75,20 @@ func query(name, qtype string) {
 	}
 	var qmsg dns.Msg
 	qmsg.SetQuestion(qname, dtype)
+	//qmsg.CheckingDisabled = true
 
 	rsp := resolver.ResolveMsg(&qmsg)
 
 	color.Printf("\n")
 
-	if err != nil {
-		color.Printf("@{r};; %s\t%s\t%s\n", err, name, qtype)
-	} else if rsp == nil {
+	if rsp == nil {
 		color.Printf("@{y};; NIL\t%s\t%s\n", name, qtype)
 	} else if len(rsp.Answer) > 0 {
 		color.Printf("@{g};; TRUE\t%s\t%s\n", name, qtype)
 		color.Printf("@{g}%s", rsp)
 	} else {
 		color.Printf("@{r};; FALSE\t%s\t%s\n", name, qtype)
+		color.Printf("@{r}%s", rsp)
 	}
 
 	color.Printf("@{.w};; Elapsed: %s\n", time.Since(start).String())
